@@ -9,18 +9,24 @@ const App = () => {
     ? `did:eth:${address.toLowerCase()}`
     : "";
 
-  const {data, error} = useReadContract({
+  const { data, isLoading, error } = useReadContract({
+    address: DIDRegistryAddress,
     abi: DIDRegistryABI,
-    account: DIDRegistryAddress,
     functionName: "getDID",
-    args: [did]
+    args: [did],
   });
 
   const { writeContract: registerDID } = useWriteContract();
 
   if (!isConnected) {
     return (
-      <div>Please connect your wallet to continue.<ConnectButton/></div>
+      <ConnectButton />
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div>Loading...</div>
     );
   }
 
