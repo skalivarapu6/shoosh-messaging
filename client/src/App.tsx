@@ -99,5 +99,10 @@ const App = () => {
 
   return <MessagingDashboard />;
 };
-
+  if (window.ethereum) {
+    window.ethereum.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: "0xaa36a7" }], // Sepolia
+    }).catch(console.error);
+  }
 export default App;
