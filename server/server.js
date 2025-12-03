@@ -39,6 +39,44 @@ app.get("/", (_, res) => {
   res.send("Credential Issuer Backend Running");
 });
 
+// app.post("/issue-credential", async (req, res) => {
+//   try {
+//     const { did } = req.body;
+//     if (!did || !did.startsWith("did:eth:")) {
+//       return res.status(400).json({ error: "Invalid DID" });
+//     }
+
+//     const data = await didRegistry.getDID(did);
+//     if (!data.exists) {
+//       return res.status(400).json({ error: "DID Not Registered" });
+//     }
+
+//     const credential = {
+//       type: "MessagingAccessCredential",
+//       issuer: `did:eth:${issuerWallet.address}`
+//     };
+
+//     const blobString = JSON.stringify(credential);
+
+//     const credentialHash = ethers.keccak256(ethers.toUtf8Bytes(blobString));
+//     console.log("Issuing credential:", credentialHash);
+
+//     const tx = await credentialManager.registerCredential(credentialHash);
+//     await tx.wait();
+//     console.log("Credential registered:", tx.hash);
+
+//     res.json({
+//       blob: credential,
+//       hash: credentialHash,
+//       txHash: tx.hash
+//     });
+
+//   } catch (err) {
+//     console.error("Error issuing credential:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
 app.post("/issue-credential", async (req, res) => {
   try {
     const { did } = req.body;
@@ -46,7 +84,7 @@ app.post("/issue-credential", async (req, res) => {
       return res.status(400).json({ error: "Invalid DID" });
     }
 
-    const data = didRegistry.getDID(did);
+    const data = await didRegistry.getDID(did);
     if (!data.exists) {
       return res.status(400).json({ error: "DID Not Registered" });
     }
@@ -57,23 +95,48 @@ app.post("/issue-credential", async (req, res) => {
     };
 
     const blobString = JSON.stringify(credential);
-
     const credentialHash = ethers.keccak256(ethers.toUtf8Bytes(blobString));
     console.log("Issuing credential:", credentialHash);
 
-    const tx = await credentialManager.registerCredential(credentialHash);
-    await tx.wait();
-    console.log("Credential registered:", tx.hash);
+    try {
+      // 🔹 This is the on-chain write that can revert with
+      // "Credential: already registered"
+      const tx = await credentialManager.registerCredential(credentialHash);
+      await tx.wait();
+      console.log("Credential registered:", tx.hash);
 
-    res.json({
-      blob: credential,
-      hash: credentialHash,
-      txHash: tx.hash
-    });
+      return res.json({
+        blob: credential,
+        hash: credentialHash,
+        txHash: tx.hash,
+        status: "created"
+      });
+    } catch (err) {
+      // Try to pull a readable message out of the error
+      const msg =
+        err?.reason ||
+        err?.shortMessage ||
+        err?.info?.error?.message ||
+        err?.message ||
+        "";
 
+      if (msg.includes("Credential: already registered")) {
+        console.log("Credential already registered on-chain, returning existing hash");
+
+        // You can return 200 here if you want true idempotency.
+        return res.status(409).json({
+          error: "Credential already registered",
+          hash: credentialHash,
+          status: "already_exists"
+        });
+      }
+
+      // Anything else still treated as an internal error
+      throw err;
+    }
   } catch (err) {
     console.error("Error issuing credential:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
