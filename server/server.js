@@ -127,6 +127,7 @@ app.post("/issue-credential", async (req, res) => {
         return res.status(409).json({
           error: "Credential already registered",
           hash: credentialHash,
+          blob: credential,
           status: "already_exists"
         });
       }

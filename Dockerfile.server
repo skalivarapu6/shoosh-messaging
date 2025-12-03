@@ -1,0 +1,18 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY server/package*.json ./
+
+# Install dependencies
+RUN npm install
+
+# Copy server source code
+COPY server/ ./
+
+# Expose server port
+EXPOSE 3001
+
+# Start server
+CMD ["node", "server.js"]
