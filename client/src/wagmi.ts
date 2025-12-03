@@ -1,14 +1,30 @@
-import { getDefaultConfig} from '@rainbow-me/rainbowkit';
-import { mainnet } from 'wagmi/chains';
+import { getDefaultConfig } from '@rainbow-me/rainbowkit';
+import { sepolia } from 'wagmi/chains';
 import { http } from 'wagmi';
 
+const alchemyKey = import.meta.env.VITE_ALCHEMY_KEY;
+const isValidKey = alchemyKey && alchemyKey !== "<my_api_key>" && alchemyKey !== "YOUR_ALCHEMY_KEY";
+
+const projectId = import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID || 'YOUR_PROJECT_ID';
+
+console.log("[Debug] wagmi.ts loaded");
+console.log("[Debug] Alchemy Key present:", !!alchemyKey);
+console.log("[Debug] Project ID:", projectId);
+console.log("[Debug] Is Valid Alchemy Key:", isValidKey);
+
+if (projectId === 'YOUR_PROJECT_ID') {
+  console.error("⚠️ VITE_WALLET_CONNECT_PROJECT_ID is not set. WalletConnect features will fail.");
+}
+
 export const config = getDefaultConfig({
-  appName: 'RainbowKit demo',
-  projectId: 'YOUR_PROJECT_ID',
+  appName: 'Message Encryption Service',
+  projectId,
   chains: [
-    mainnet,
+    sepolia,
   ],
   transports: {
-    [mainnet.id]: http(`https://eth-mainnet.g.alchemy.com/v2/${import.meta.env.VITE_ALCHEMY_KEY}`)
+    [sepolia.id]: isValidKey
+      ? http(`https://eth-sepolia.g.alchemy.com/v2/${alchemyKey}`)
+      : http(),
   }
 });

@@ -2,6 +2,7 @@ import '@rainbow-me/rainbowkit/styles.css';
 import './index.css';
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { sepolia } from 'wagmi/chains';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider } from 'wagmi';
@@ -20,7 +21,7 @@ root.render(
   <React.StrictMode>
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <RainbowKitProvider>
+        <RainbowKitProvider initialChain={sepolia}>
           <App />
         </RainbowKitProvider>
       </QueryClientProvider>

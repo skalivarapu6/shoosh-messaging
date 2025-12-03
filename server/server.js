@@ -2,10 +2,10 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { ethers } from "ethers";
-import CredentialManagerABI from "./CredentialManagerABI.json" assert { type: "json" };
-import DIDRegistryABI from "./DIDRegistryABI.json" assert { type: "json" };
+import CredentialManagerABI from "./CredentialManagerABI.json" with { type: "json" };
+import DIDRegistryABI from "./DIDRegistryABI.json" with { type: "json" };
 
-dotenv.config();
+dotenv.config({ path: "../.env" });
 
 const app = express();
 app.use(cors());
@@ -17,7 +17,7 @@ const ALCHEMY_URL = process.env.ALCHEMY_MAINNET_URL;
 const CREDENTIAL_MANAGER_ADDRESS = process.env.CREDENTIAL_MANAGER_ADDRESS;
 const DID_REGISTRY_ADDRESS = process.env.DID_REGISTRY_ADDRESS;
 
-if (!ISSUER_PRIVATE_KEY || !ALCHEMY_URL || !CREDENTIAL_MANAGER_ADDRESS  || !DID_REGISTRY_ADDRESS) {
+if (!ISSUER_PRIVATE_KEY || !ALCHEMY_URL || !CREDENTIAL_MANAGER_ADDRESS || !DID_REGISTRY_ADDRESS) {
   console.error("Missing environment variables.");
   process.exit(1);
 }
@@ -29,10 +29,10 @@ const credentialManager = new ethers.Contract(
   CredentialManagerABI,
   issuerWallet
 );
-const didRegistry = ethers.Contract(
-    DID_REGISTRY_ADDRESS,
-    DIDRegistryABI,
-    issuerWallet
+const didRegistry = new ethers.Contract(
+  DID_REGISTRY_ADDRESS,
+  DIDRegistryABI,
+  issuerWallet
 )
 
 app.get("/", (_, res) => {
@@ -47,8 +47,8 @@ app.post("/issue-credential", async (req, res) => {
     }
 
     const data = didRegistry.getDID(did);
-    if(!data.exists) {
-        return res.status(400).json({ error: "DID Not Registered" });
+    if (!data.exists) {
+      return res.status(400).json({ error: "DID Not Registered" });
     }
 
     const credential = {
