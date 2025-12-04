@@ -255,7 +255,9 @@ const MessagingDashboard = () => {
         fetchHistory();
     }, [publicClient, myDID]);
 
-    // Watch for incoming messages
+    // 🔹 MessageSent events are now handled by WebSockets for real-time delivery
+    // This reduces blockchain API calls significantly
+    /*
     useWatchContractEvent({
         address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
         abi: MessageMetadataABI,
@@ -352,6 +354,7 @@ const MessagingDashboard = () => {
             });
         },
     });
+    */
 
     // Watch for acknowledgments
     useWatchContractEvent({
