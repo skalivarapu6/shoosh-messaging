@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAccount, useWriteContract, useWatchContractEvent, usePublicClient } from 'wagmi';
 import { MessageMetadataABI } from '../contracts/MessageMetadata';
 import { keccak256, toUtf8Bytes } from 'ethers';
+import { io, Socket } from 'socket.io-client';
 import './MessagingDashboard.css';
 
 interface Message {
@@ -49,6 +50,74 @@ const MessagingDashboard = () => {
                 console.error("Failed to load saved messages", e);
             }
         }
+    }, [myDID]);
+
+    // 🔹 WebSocket connection for real-time messages
+    useEffect(() => {
+        if (!myDID) return;
+
+        const socket: Socket = io('http://localhost:3001');
+
+        socket.on('connect', () => {
+            console.log('✅ Connected to WebSocket server');
+        });
+
+        socket.on('new-message', async (data: {
+            messageHash: string;
+            ipfsCid: string;
+            senderDID: string;
+            receiverDID: string;
+            timestamp: number;
+        }) => {
+            console.log('📨 Received new message via WebSocket:', data);
+
+            // Only process if this message is for us
+            if (data.receiverDID.toLowerCase() !== myDID.toLowerCase()) {
+                return;
+            }
+
+            // Check if we already have this message
+            setMessages(prev => {
+                if (prev.some(m => m.hash === data.messageHash && !m.isSent)) {
+                    return prev; // Already have it
+                }
+
+                // Fetch content if it's a local CID
+                let content: string | undefined;
+                if (data.ipfsCid?.startsWith('local-')) {
+                    const encrypted = localStorage.getItem(`ipfs_${data.ipfsCid}`);
+                    if (encrypted) {
+                        try {
+                            content = atob(encrypted);
+                        } catch (e) {
+                            console.error('Failed to decrypt message', e);
+                        }
+                    }
+                }
+
+                const newMessage: Message = {
+                    hash: data.messageHash,
+                    senderDID: data.senderDID,
+                    receiverDID: data.receiverDID,
+                    timestamp: data.timestamp / 1000,
+                    content,
+                    ipfsCid: data.ipfsCid,
+                    acknowledged: false,
+                    isSent: false
+                };
+
+                console.log('✅ Adding message to inbox:', newMessage);
+                return [...prev, newMessage];
+            });
+        });
+
+        socket.on('disconnect', () => {
+            console.log('❌ Disconnected from WebSocket server');
+        });
+
+        return () => {
+            socket.disconnect();
+        };
     }, [myDID]);
 
     // Fetch historical messages on mount with chunking
@@ -406,7 +475,12 @@ const MessagingDashboard = () => {
                 await fetch('http://localhost:3001/store-cid', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ messageHash, ipfsCid })
+                    body: JSON.stringify({
+                        messageHash,
+                        ipfsCid,
+                        senderDID: myDID,
+                        receiverDID: recipientDID
+                    })
                 });
                 console.log('CID stored on server for cross-user access');
             } catch (err) {

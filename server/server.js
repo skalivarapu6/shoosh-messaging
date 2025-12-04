@@ -1,4 +1,6 @@
 import express from "express";
+import { createServer } from "http";
+import { Server } from "socket.io";
 import cors from "cors";
 import dotenv from "dotenv";
 import { ethers } from "ethers";
@@ -8,6 +10,14 @@ import DIDRegistryABI from "./DIDRegistryABI.json" with { type: "json" };
 dotenv.config({ path: "../.env" });
 
 const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: "http://localhost:5173",
+    methods: ["GET", "POST"]
+  }
+});
+
 app.use(cors());
 app.use(express.json());
 
@@ -46,7 +56,7 @@ app.get("/", (_, res) => {
 // 🔹 Store IPFS CID for a message
 app.post("/store-cid", (req, res) => {
   try {
-    const { messageHash, ipfsCid } = req.body;
+    const { messageHash, ipfsCid, senderDID, receiverDID } = req.body;
 
     if (!messageHash || !ipfsCid) {
       return res.status(400).json({ error: "Missing messageHash or ipfsCid" });
@@ -58,6 +68,16 @@ app.post("/store-cid", (req, res) => {
     });
 
     console.log(`Stored CID for message ${messageHash}: ${ipfsCid}`);
+
+    // 🔹 Broadcast new message to all connected clients via WebSocket
+    io.emit('new-message', {
+      messageHash,
+      ipfsCid,
+      senderDID,
+      receiverDID,
+      timestamp: Date.now()
+    });
+
     res.json({ success: true });
   } catch (error) {
     console.error("Error storing CID:", error);
@@ -184,7 +204,25 @@ app.post("/issue-credential", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// 🔹 WebSocket connection handling
+io.on('connection', (socket) => {
+  console.log(`Client connected: ${socket.id}`);
+
+  socket.on('disconnect', () => {
+    console.log(`Client disconnected: ${socket.id}`);
+  });
+
+  // Optional: Handle client-side events if needed
+  socket.on('request-cid', async (messageHash) => {
+    const data = cidRegistry.get(messageHash);
+    if (data) {
+      socket.emit('cid-response', { messageHash, ipfsCid: data.ipfsCid });
+    }
+  });
+});
+
+httpServer.listen(PORT, () => {
   console.log(`Credential Issuer running on http://localhost:${PORT}`);
+  console.log(`WebSocket server ready on ws://localhost:${PORT}`);
 });
 
