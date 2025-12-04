@@ -49,15 +49,18 @@ const App: React.FC = () => {
       }
 
       if (response.status === 409 && data.status === "already_exists") {
-        console.log("Credential already registered:", data.hash);
-        // If it exists on chain but we don't have it locally, we might be in trouble
-        // unless the backend sends the blob back (which it does in the code I saw)
+        console.log("Credential already registered on-chain:", data.hash);
+        
         if (data.blob) {
+          console.log("Recovering credential blob:", data.blob);
           localStorage.setItem("credential_blob", JSON.stringify(data.blob));
-          alert("Credential recovered! You are good to go.");
+          console.log("Credential saved to localStorage, reloading page...");
+          alert("Credential already exists! Redirecting to dashboard...");
+          // Force reload to trigger hasCredential check
           window.location.reload();
         } else {
-          alert("Credential exists on chain but server didn't return it. Cannot login.");
+          console.error("Server didn't return credential blob");
+          alert("Credential exists on chain but server didn't return it. Please contact support.");
         }
         return;
       }
