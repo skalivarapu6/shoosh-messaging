@@ -47,7 +47,37 @@ const didRegistry = new ethers.Contract(
 
 // 🔹 Temporary CID Registry (in-memory)
 // Maps messageHash -> { ipfsCid, timestamp }
-const cidRegistry = new Map();
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Persistent CID Registry
+const CID_FILE = path.join(__dirname, 'cids.json');
+let cidRegistry = new Map();
+
+// Load CIDs from file on startup
+if (fs.existsSync(CID_FILE)) {
+  try {
+    const data = fs.readFileSync(CID_FILE, 'utf8');
+    const json = JSON.parse(data);
+    cidRegistry = new Map(Object.entries(json));
+    console.log(`Loaded ${cidRegistry.size} CIDs from storage`);
+  } catch (err) {
+    console.error('Failed to load CIDs:', err);
+  }
+}
+
+const saveCids = () => {
+  try {
+    const json = Object.fromEntries(cidRegistry);
+    fs.writeFileSync(CID_FILE, JSON.stringify(json, null, 2));
+  } catch (err) {
+    console.error('Failed to save CIDs:', err);
+  }
+};
 
 app.get("/", (_, res) => {
   res.send("Credential Issuer Backend Running");
@@ -66,6 +96,9 @@ app.post("/store-cid", (req, res) => {
       ipfsCid,
       timestamp: Date.now()
     });
+
+    // Persist to file
+    saveCids();
 
     console.log(`Stored CID for message ${messageHash}: ${ipfsCid}`);
 

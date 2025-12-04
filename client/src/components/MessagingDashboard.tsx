@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAccount, useWriteContract, useWatchContractEvent, usePublicClient } from 'wagmi';
 import { MessageMetadataABI } from '../contracts/MessageMetadata';
 import { keccak256, toUtf8Bytes } from 'ethers';
@@ -19,12 +19,15 @@ interface Message {
 const MessagingDashboard = () => {
     const { address } = useAccount();
     const [messages, setMessages] = useState<Message[]>([]);
-    const [activeTab, setActiveTab] = useState<'compose' | 'inbox' | 'sent'>('compose');
+    const [selectedContact, setSelectedContact] = useState<string | null>(null);
     const [recipientDID, setRecipientDID] = useState('');
     const [messageContent, setMessageContent] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState('');
+    const [showNewChatModal, setShowNewChatModal] = useState(false);
+    const [searchTerm, setSearchTerm] = useState('');
 
+    const messagesEndRef = useRef<HTMLDivElement>(null);
     const { writeContract } = useWriteContract();
     const publicClient = usePublicClient();
 
@@ -33,6 +36,45 @@ const MessagingDashboard = () => {
     // Pinata configuration for IPFS uploads
     const PINATA_API_KEY = import.meta.env.VITE_PINATA_API_KEY || '';
     const PINATA_SECRET_KEY = import.meta.env.VITE_PINATA_SECRET_KEY || '';
+
+    // Group messages by conversation partner
+    const conversations = useMemo(() => {
+        const groups = new Map<string, Message[]>();
+
+        messages.forEach(msg => {
+            const partner = msg.isSent ? msg.receiverDID : msg.senderDID;
+            if (!groups.has(partner)) {
+                groups.set(partner, []);
+            }
+            groups.get(partner)!.push(msg);
+        });
+
+        // Sort messages within each conversation
+        groups.forEach(msgs => {
+            msgs.sort((a, b) => a.timestamp - b.timestamp);
+        });
+
+        return groups;
+    }, [messages]);
+
+    // Get sorted list of contacts based on last message timestamp
+    const sortedContacts = useMemo(() => {
+        const contacts = Array.from(conversations.keys());
+        return contacts.sort((a, b) => {
+            const msgsA = conversations.get(a)!;
+            const msgsB = conversations.get(b)!;
+            const lastA = msgsA[msgsA.length - 1].timestamp;
+            const lastB = msgsB[msgsB.length - 1].timestamp;
+            return lastB - lastA;
+        }).filter(did => did.toLowerCase().includes(searchTerm.toLowerCase()));
+    }, [conversations, searchTerm]);
+
+    // Auto-scroll to bottom of chat
+    useEffect(() => {
+        if (selectedContact) {
+            messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+        }
+    }, [messages, selectedContact]);
 
     // Load locally saved messages on mount
     useEffect(() => {
@@ -52,7 +94,7 @@ const MessagingDashboard = () => {
         }
     }, [myDID]);
 
-    // 🔹 WebSocket connection for real-time messages
+    // WebSocket connection
     useEffect(() => {
         if (!myDID) return;
 
@@ -69,20 +111,19 @@ const MessagingDashboard = () => {
             receiverDID: string;
             timestamp: number;
         }) => {
-            console.log('📨 Received new message via WebSocket:', data);
+            if (data.receiverDID.toLowerCase() !== myDID.toLowerCase()) return;
 
-            // Only process if this message is for us
-            if (data.receiverDID.toLowerCase() !== myDID.toLowerCase()) {
-                return;
-            }
-
-            // Check if we already have this message
             setMessages(prev => {
-                if (prev.some(m => m.hash === data.messageHash && !m.isSent)) {
-                    return prev; // Already have it
+                if (prev.some(m => m.hash === data.messageHash && !m.isSent)) return prev;
+
+                // Save CID mapping to localStorage so we can load it on refresh
+                if (data.ipfsCid) {
+                    const cidMappingStr = localStorage.getItem('ipfs_cid_mapping');
+                    const cidMapping = cidMappingStr ? JSON.parse(cidMappingStr) : {};
+                    cidMapping[data.messageHash] = data.ipfsCid;
+                    localStorage.setItem('ipfs_cid_mapping', JSON.stringify(cidMapping));
                 }
 
-                // Fetch content if it's a local CID
                 let content: string | undefined;
                 if (data.ipfsCid?.startsWith('local-')) {
                     const encrypted = localStorage.getItem(`ipfs_${data.ipfsCid}`);
@@ -95,7 +136,7 @@ const MessagingDashboard = () => {
                     }
                 }
 
-                const newMessage: Message = {
+                return [...prev, {
                     hash: data.messageHash,
                     senderDID: data.senderDID,
                     receiverDID: data.receiverDID,
@@ -104,15 +145,8 @@ const MessagingDashboard = () => {
                     ipfsCid: data.ipfsCid,
                     acknowledged: false,
                     isSent: false
-                };
-
-                console.log('✅ Adding message to inbox:', newMessage);
-                return [...prev, newMessage];
+                }];
             });
-        });
-
-        socket.on('disconnect', () => {
-            console.log('❌ Disconnected from WebSocket server');
         });
 
         return () => {
@@ -120,47 +154,50 @@ const MessagingDashboard = () => {
         };
     }, [myDID]);
 
-    // Fetch historical messages on mount with chunking
+    // Fetch historical messages
     useEffect(() => {
         if (!publicClient || !myDID) return;
 
         const fetchHistory = async () => {
             try {
                 const currentBlock = await publicClient.getBlockNumber();
-                // We only fetch the last 100 blocks to avoid hitting strict RPC limits
-                // The user relies on localStorage for older sent messages
-                const totalBlocksToFetch = 100n;
-                const chunkSize = 10n; // Strict limit from error message
-
+                // Reduce fetch range to avoid rate limits
+                const totalBlocksToFetch = 500n;
+                const chunkSize = 10n; // Strict 10 block limit for free tier
                 const startBlock = currentBlock - totalBlocksToFetch > 0n ? currentBlock - totalBlocksToFetch : 0n;
+
+                console.log(`Fetching history from block ${startBlock} to ${currentBlock}`);
 
                 const sentLogs = [];
                 const ackLogs = [];
 
-                // Fetch in chunks
                 for (let i = startBlock; i < currentBlock; i += chunkSize) {
-                    const to = (i + chunkSize - 1n) < currentBlock ? (i + chunkSize - 1n) : currentBlock;
-                    try {
-                        const chunkSent = await publicClient.getContractEvents({
-                            address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
-                            abi: MessageMetadataABI,
-                            eventName: 'MessageSent',
-                            fromBlock: i,
-                            toBlock: to
-                        });
-                        sentLogs.push(...chunkSent);
+                    const toBlock = i + chunkSize > currentBlock ? currentBlock : i + chunkSize;
 
-                        const chunkAck = await publicClient.getContractEvents({
-                            address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
-                            abi: MessageMetadataABI,
-                            eventName: 'MessageAcknowledged',
-                            fromBlock: i,
-                            toBlock: to
-                        });
+                    // Add delay to respect RPC rate limits
+                    await new Promise(resolve => setTimeout(resolve, 200));
+
+                    try {
+                        const [chunkSent, chunkAck] = await Promise.all([
+                            publicClient.getContractEvents({
+                                address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
+                                abi: MessageMetadataABI,
+                                eventName: 'MessageSent',
+                                fromBlock: i,
+                                toBlock: toBlock
+                            }),
+                            publicClient.getContractEvents({
+                                address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
+                                abi: MessageMetadataABI,
+                                eventName: 'MessageAcknowledged',
+                                fromBlock: i,
+                                toBlock: toBlock
+                            })
+                        ]);
+                        sentLogs.push(...chunkSent);
                         ackLogs.push(...chunkAck);
                     } catch (err) {
                         console.warn(`Failed to fetch logs for chunk ${i}-${to}`, err);
-                        // Continue to next chunk
                     }
                 }
 
@@ -168,11 +205,10 @@ const MessagingDashboard = () => {
                     ackLogs.map(log => ((log as any).args).messageHash)
                 );
 
-                const historicalMessages: Message[] = [];
-
-                // Get CID mapping from localStorage
                 const cidMappingStr = localStorage.getItem('ipfs_cid_mapping');
                 const cidMapping = cidMappingStr ? JSON.parse(cidMappingStr) : {};
+
+                const historicalMessages: Message[] = [];
 
                 for (const log of sentLogs) {
                     const args = (log as any).args;
@@ -181,67 +217,45 @@ const MessagingDashboard = () => {
                     const isIncoming = receiverDID.toLowerCase() === myDID.toLowerCase();
                     const isOutgoing = senderDID.toLowerCase() === myDID.toLowerCase();
 
-                    // Get IPFS CID from mapping if available
+                    if (!isIncoming && !isOutgoing) continue;
+
                     let ipfsCid = cidMapping[messageHash];
                     let content: string | undefined;
 
-                    // If not in localStorage, try fetching from server
-                    if (!ipfsCid) {
+                    if (!ipfsCid && isIncoming) {
                         try {
                             const response = await fetch(`http://localhost:3001/get-cid/${messageHash}`);
                             if (response.ok) {
                                 const data = await response.json();
                                 ipfsCid = data.ipfsCid;
-                                console.log(`Retrieved CID from server for ${messageHash}`);
                             }
                         } catch (err) {
                             console.warn(`Could not fetch CID from server for ${messageHash}`);
                         }
                     }
 
-                    // If we have the CID and it's local, get the content immediately
                     if (ipfsCid?.startsWith('local-')) {
                         const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
                         if (encrypted) {
                             try {
                                 content = atob(encrypted);
-                            } catch (e) {
-                                console.error('Failed to decrypt message', e);
-                            }
+                            } catch (e) { console.error(e); }
                         }
                     }
 
-                    // Add as incoming message (Inbox)
-                    if (isIncoming) {
-                        historicalMessages.push({
-                            hash: messageHash,
-                            senderDID,
-                            receiverDID,
-                            timestamp: Number(timestamp),
-                            acknowledged: acknowledgedHashes.has(messageHash),
-                            isSent: false,
-                            ipfsCid,
-                            content
-                        });
-                    }
-
-                    // Add as outgoing message (Sent)
-                    if (isOutgoing) {
-                        historicalMessages.push({
-                            hash: messageHash,
-                            senderDID,
-                            receiverDID,
-                            timestamp: Number(timestamp),
-                            acknowledged: acknowledgedHashes.has(messageHash),
-                            isSent: true,
-                            ipfsCid,
-                            content
-                        });
-                    }
+                    historicalMessages.push({
+                        hash: messageHash,
+                        senderDID,
+                        receiverDID,
+                        timestamp: Number(timestamp),
+                        acknowledged: acknowledgedHashes.has(messageHash),
+                        isSent: isOutgoing,
+                        ipfsCid,
+                        content
+                    });
                 }
 
                 setMessages(prev => {
-                    // Merge with existing messages, avoiding duplicates based on hash AND isSent
                     const existingKeys = new Set(prev.map(m => `${m.hash}-${m.isSent}`));
                     const newMessages = historicalMessages.filter(m => !existingKeys.has(`${m.hash}-${m.isSent}`));
                     return [...prev, ...newMessages];
@@ -255,107 +269,6 @@ const MessagingDashboard = () => {
         fetchHistory();
     }, [publicClient, myDID]);
 
-    // 🔹 MessageSent events are now handled by WebSockets for real-time delivery
-    // This reduces blockchain API calls significantly
-    /*
-    useWatchContractEvent({
-        address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
-        abi: MessageMetadataABI,
-        eventName: 'MessageSent',
-        onLogs(logs) {
-            logs.forEach(async (log) => {
-                // @ts-ignore - wagmi's Log type doesn't include args, but it's available at runtime
-                const args = (log as any).args;
-                const { messageHash, senderDID, receiverDID, timestamp } = args;
-
-                // Check if this message is for us (Inbox)
-                if (receiverDID.toLowerCase() === myDID.toLowerCase()) {
-                    // Try to get IPFS CID from localStorage mapping
-                    const cidMapping = localStorage.getItem('ipfs_cid_mapping');
-                    let ipfsCid: string | undefined;
-                    let content: string | undefined;
-
-                    if (cidMapping) {
-                        try {
-                            const mapping = JSON.parse(cidMapping);
-                            ipfsCid = mapping[messageHash];
-
-                            // If we have the CID and it's local, get the content immediately
-                            if (ipfsCid?.startsWith('local-')) {
-                                const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
-                                if (encrypted) {
-                                    content = atob(encrypted);
-                                }
-                            }
-                        } catch (e) {
-                            console.error('Failed to parse CID mapping', e);
-                        }
-                    }
-
-                    // If not in localStorage, try fetching from server
-                    if (!ipfsCid) {
-                        try {
-                            const response = await fetch(`http://localhost:3001/get-cid/${messageHash}`);
-                            if (response.ok) {
-                                const data = await response.json();
-                                ipfsCid = data.ipfsCid;
-                                console.log(`Retrieved CID from server for incoming message ${messageHash}`);
-
-                                // If it's a local CID, try to get content
-                                if (ipfsCid?.startsWith('local-')) {
-                                    const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
-                                    if (encrypted) {
-                                        content = atob(encrypted);
-                                    }
-                                }
-                            }
-                        } catch (err) {
-                            console.warn(`Could not fetch CID from server for ${messageHash}`);
-                        }
-                    }
-
-                    const newMessage: Message = {
-                        hash: messageHash,
-                        senderDID,
-                        receiverDID,
-                        timestamp: Number(timestamp),
-                        acknowledged: false,
-                        isSent: false,
-                        ipfsCid,
-                        content
-                    };
-
-                    setMessages(prev => {
-                        // Avoid duplicates (check hash AND isSent)
-                        if (prev.some(m => m.hash === messageHash && m.isSent === false)) return prev;
-                        return [...prev, newMessage];
-                    });
-                }
-
-                // Also track messages we sent (Sent)
-                if (senderDID.toLowerCase() === myDID.toLowerCase()) {
-                    const sentMessage: Message = {
-                        hash: messageHash,
-                        senderDID,
-                        receiverDID,
-                        timestamp: Number(timestamp),
-                        acknowledged: false,
-                        isSent: true,
-                    };
-
-                    setMessages(prev => {
-                        if (prev.some(m => m.hash === messageHash && m.isSent === true)) return prev;
-                        const updated = [...prev, sentMessage];
-                        // Persist to local storage
-                        localStorage.setItem(`sent_messages_${myDID}`, JSON.stringify(updated.filter(m => m.isSent)));
-                        return updated;
-                    });
-                }
-            });
-        },
-    });
-    */
-
     // Watch for acknowledgments
     useWatchContractEvent({
         address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
@@ -365,7 +278,6 @@ const MessagingDashboard = () => {
             logs.forEach((log) => {
                 const args = (log as any).args;
                 const { messageHash } = args;
-
                 setMessages(prev =>
                     prev.map(msg =>
                         msg.hash === messageHash ? { ...msg, acknowledged: true } : msg
@@ -375,105 +287,63 @@ const MessagingDashboard = () => {
         }
     });
 
-    const encryptMessage = (content: string): string => {
-        // Simple Base64 encoding for demo - in production use proper asymmetric encryption
-        // You'd typically encrypt with recipient's public key here
-        return btoa(content);
-    };
-
-    const decryptMessage = (encrypted: string): string => {
-        try {
-            return atob(encrypted);
-        } catch {
-            return '[Unable to decrypt message]';
-        }
+    const encryptMessage = (content: string) => btoa(content);
+    const decryptMessage = (encrypted: string) => {
+        try { return atob(encrypted); } catch { return '[Unable to decrypt]'; }
     };
 
     const uploadToIPFS = async (content: string): Promise<string> => {
-        try {
-            const encrypted = encryptMessage(content);
-
-            // Use Pinata if configured, otherwise use public IPFS gateway
-            if (PINATA_API_KEY && PINATA_SECRET_KEY) {
-                const formData = new FormData();
-                const blob = new Blob([encrypted], { type: 'text/plain' });
-                formData.append('file', blob);
-
-                const response = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
-                    method: 'POST',
-                    headers: {
-                        'pinata_api_key': PINATA_API_KEY,
-                        'pinata_secret_api_key': PINATA_SECRET_KEY,
-                    },
-                    body: formData,
-                });
-
-                const data = await response.json();
-                return data.IpfsHash;
-            } else {
-                // Fallback: Store in localStorage with a unique key for demo purposes
-                // In production, you MUST use actual IPFS/Pinata
-                const cid = 'local-' + Date.now() + '-' + Math.random().toString(36).substring(7);
-                localStorage.setItem(`ipfs_${cid}`, encrypted);
-                console.warn('⚠️ Using localStorage fallback. Configure Pinata for production!');
-                return cid;
-            }
-        } catch (error) {
-            console.error('IPFS upload error:', error);
-            throw new Error('Failed to upload to IPFS');
+        const encrypted = encryptMessage(content);
+        if (PINATA_API_KEY && PINATA_SECRET_KEY) {
+            const formData = new FormData();
+            const blob = new Blob([encrypted], { type: 'text/plain' });
+            formData.append('file', blob);
+            const response = await fetch('https://api.pinata.cloud/pinning/pinFileToIPFS', {
+                method: 'POST',
+                headers: {
+                    'pinata_api_key': PINATA_API_KEY,
+                    'pinata_secret_api_key': PINATA_SECRET_KEY,
+                },
+                body: formData,
+            });
+            const data = await response.json();
+            return data.IpfsHash;
+        } else {
+            const cid = 'local-' + Date.now() + '-' + Math.random().toString(36).substring(7);
+            localStorage.setItem(`ipfs_${cid}`, encrypted);
+            return cid;
         }
     };
 
     const fetchFromIPFS = async (cid: string): Promise<string> => {
-        try {
-            // Check if it's a local storage fallback
-            if (cid.startsWith('local-')) {
-                const encrypted = localStorage.getItem(`ipfs_${cid}`);
-                if (!encrypted) throw new Error('Content not found');
-                return decryptMessage(encrypted);
-            }
-
-            // Fetch from IPFS gateway
-            const response = await fetch(`https://gateway.pinata.cloud/ipfs/${cid}`);
-            if (!response.ok) throw new Error('Failed to fetch from IPFS');
-
-            const encrypted = await response.text();
+        if (cid.startsWith('local-')) {
+            const encrypted = localStorage.getItem(`ipfs_${cid}`);
+            if (!encrypted) throw new Error('Content not found');
             return decryptMessage(encrypted);
-        } catch (error) {
-            console.error('IPFS fetch error:', error);
-            return '[Content unavailable]';
         }
+        const response = await fetch(`https://gateway.pinata.cloud/ipfs/${cid}`);
+        if (!response.ok) throw new Error('Failed to fetch from IPFS');
+        const encrypted = await response.text();
+        return decryptMessage(encrypted);
     };
 
-    const sendMessage = async () => {
-        if (!recipientDID || !messageContent) {
-            setStatusMessage('Please enter both recipient and message');
-            return;
-        }
-
-        if (!recipientDID.startsWith('did:eth:')) {
-            setStatusMessage('Invalid DID format. Must start with "did:eth:"');
-            return;
-        }
+    const handleSendMessage = async (targetDID: string, content: string) => {
+        if (!targetDID || !content) return;
 
         setIsLoading(true);
-        setStatusMessage('Uploading to IPFS...');
+        setStatusMessage('Sending...');
 
         try {
-            // 1. Upload encrypted content to IPFS
-            const ipfsCid = await uploadToIPFS(messageContent);
-            setStatusMessage('Creating message commitment...');
+            const ipfsCid = await uploadToIPFS(content);
+            const messageHash = keccak256(toUtf8Bytes(ipfsCid + content));
 
-            // 2. Create message hash (hash of IPFS CID + content for integrity)
-            const messageHash = keccak256(toUtf8Bytes(ipfsCid + messageContent));
-
-            // 3. Store hash->CID mapping in localStorage for inbox retrieval
+            // Store mapping
             const cidMapping = localStorage.getItem('ipfs_cid_mapping');
             const mapping = cidMapping ? JSON.parse(cidMapping) : {};
             mapping[messageHash] = ipfsCid;
             localStorage.setItem('ipfs_cid_mapping', JSON.stringify(mapping));
 
-            // 4. Also store on server for cross-user messaging
+            // Store on server
             try {
                 await fetch('http://localhost:3001/store-cid', {
                     method: 'POST',
@@ -482,50 +352,44 @@ const MessagingDashboard = () => {
                         messageHash,
                         ipfsCid,
                         senderDID: myDID,
-                        receiverDID: recipientDID
+                        receiverDID: targetDID
                     })
                 });
-                console.log('CID stored on server for cross-user access');
-            } catch (err) {
-                console.warn('Failed to store CID on server:', err);
-                // Continue anyway - local storage still works
-            }
+            } catch (err) { console.warn('Failed to store on server', err); }
 
-            // 5. Send commitment to blockchain
             writeContract({
                 address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
                 abi: MessageMetadataABI,
                 functionName: 'sendMessageCommitment',
-                args: [messageHash, recipientDID],
+                args: [messageHash, targetDID],
+                gas: 500000n, // Manual gas limit to prevent estimation errors
             }, {
                 onSuccess: () => {
-                    setStatusMessage('✓ Message sent successfully!');
-                    setMessageContent('');
-                    setRecipientDID('');
-
-                    // Add to sent messages immediately
                     const newMessage: Message = {
                         hash: messageHash,
                         senderDID: myDID,
-                        receiverDID: recipientDID,
+                        receiverDID: targetDID,
                         timestamp: Date.now() / 1000,
-                        content: messageContent,
+                        content: content,
                         ipfsCid,
                         acknowledged: false,
                         isSent: true,
                     };
+
                     setMessages(prev => {
                         const updated = [...prev, newMessage];
-                        // Persist to local storage
                         localStorage.setItem(`sent_messages_${myDID}`, JSON.stringify(updated.filter(m => m.isSent)));
                         return updated;
                     });
 
-                    setTimeout(() => setStatusMessage(''), 3000);
+                    setMessageContent('');
+                    if (showNewChatModal) {
+                        setShowNewChatModal(false);
+                        setSelectedContact(targetDID);
+                    }
+                    setStatusMessage('');
                 },
-                onError: (error) => {
-                    setStatusMessage(`Error: ${error.message}`);
-                },
+                onError: (error) => setStatusMessage(`Error: ${error.message}`),
             });
         } catch (error: any) {
             setStatusMessage(`Error: ${error.message}`);
@@ -540,252 +404,234 @@ const MessagingDashboard = () => {
             abi: MessageMetadataABI,
             functionName: 'acknowledgeMessage',
             args: [messageHash],
+            gas: 500000n, // Manual gas limit
         }, {
             onSuccess: () => {
                 setMessages(prev => {
                     const updated = prev.map(msg =>
                         msg.hash === messageHash ? { ...msg, acknowledged: true } : msg
                     );
-                    // Update local storage if needed (to sync ack status)
                     localStorage.setItem(`sent_messages_${myDID}`, JSON.stringify(updated.filter(m => m.isSent)));
                     return updated;
                 });
-                setStatusMessage('✓ Message acknowledged!');
-                setTimeout(() => setStatusMessage(''), 3000);
             },
-            onError: (error) => {
-                setStatusMessage(`Error: ${error.message}`);
-            },
+            onError: (error) => setStatusMessage(`Error: ${error.message}`),
         });
     };
 
     const loadMessageContent = async (message: Message) => {
-        // If we don't have the CID (e.g. from historical logs), we can't load it easily 
-        // without an indexer or storing it in the event (which we don't).
-        // BUT, for the demo, if it's a local message, we might have it in localStorage if we sent it.
-        // If we received it, we need the CID. 
-        // The current contract DOES NOT store the CID in the event. This is a limitation.
-        // For this prototype, we will prompt the user to enter the CID if missing, or 
-        // rely on the fact that for "Sent" messages we might not have the CID in history unless we stored it locally.
-
-        // Wait! The contract only stores the hash. The event only has the hash.
-        // The CID is NOT on-chain. This means the receiver cannot download the message 
-        // unless the sender sent the CID off-chain or it was in the event.
-        // Checking the contract...
-        // The contract event is: event MessageSent(bytes32 indexed messageHash, string senderDID, string receiverDID, uint256 timestamp);
-        // It does NOT contain the IPFS CID.
-        // This means the receiver CANNOT download the message with the current contract design 
-        // unless the CID is communicated another way.
-
-        // However, for the sake of this specific user flow where they sent it to themselves:
-        // They might have it in localStorage if they used the fallback.
-
         if (message.content) return;
-
-        // If we don't have a CID attached to the message object (which we won't for historical messages),
-        // we are kind of stuck unless we change the contract or the event.
-        // For now, let's try to find it in localStorage by iterating keys if it's a local test.
-
         if (!message.ipfsCid) {
-            // Try to find a matching hash in localStorage for demo purposes
-            // In a real app, the CID should be part of the emitted event or stored in the contract.
-            // Since we can't change the contract easily now, we'll assume the user is testing locally.
-
-            // This is a hack for the prototype to work without contract changes
-            const keys = Object.keys(localStorage);
-            for (const key of keys) {
-                if (key.startsWith('ipfs_')) {
-                    const content = localStorage.getItem(key);
-                    if (content) {
-                        // Check if this content matches the hash
-                        // We need the original CID + content to match the hash
-                        // hash = keccak256(cid + content)
-                        // But we stored encrypted content.
-                        // This is getting complicated.
-
-                        // SIMPLIFICATION:
-                        // For this prototype, we will just show a message saying 
-                        // "Content unavailable for historical messages in this version"
-                        // unless we can find a way to link it.
-                    }
-                }
-            }
-
-            alert("For historical messages fetched from chain, the IPFS CID is not available in the current contract version. You can only read messages received while you are online.");
+            alert("Content unavailable (missing CID)");
             return;
         }
-
-        const content = await fetchFromIPFS(message.ipfsCid);
-        setMessages(prev =>
-            prev.map(msg =>
-                msg.hash === message.hash ? { ...msg, content } : msg
-            )
-        );
+        try {
+            const content = await fetchFromIPFS(message.ipfsCid);
+            setMessages(prev =>
+                prev.map(msg =>
+                    msg.hash === message.hash ? { ...msg, content } : msg
+                )
+            );
+        } catch (e) {
+            console.error(e);
+        }
     };
-
-    const inboxMessages = messages.filter(m => !m.isSent);
-    const sentMessages = messages.filter(m => m.isSent);
 
     return (
         <div className="messaging-dashboard">
-            <header className="dashboard-header">
-                <h1>🔐 Secure Messaging</h1>
-                <div className="user-info">
-                    <span className="did-badge">Your DID: {myDID}</span>
+            <div className="dashboard-container">
+                {/* Sidebar */}
+                <div className={`sidebar ${!selectedContact ? 'mobile-visible' : ''}`}>
+                    <div className="sidebar-header">
+                        <div className="sidebar-user-profile">
+                            <div className="user-avatar-small">
+                                {myDID.split(':').pop()?.substring(0, 2).toUpperCase()}
+                            </div>
+                            <div className="user-profile-info">
+                                <span className="user-label">My Identity</span>
+                                <span className="user-did-full" title={myDID}>
+                                    {myDID}
+                                </span>
+                            </div>
+                        </div>
+                        <h2>Messages</h2>
+                        <input
+                            className="search-box"
+                            placeholder="Search contacts..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+                    <ul className="contacts-list">
+                        {sortedContacts.map(did => {
+                            const msgs = conversations.get(did)!;
+                            const lastMsg = msgs[msgs.length - 1];
+                            const unreadCount = msgs.filter(m => !m.isSent && !m.acknowledged).length;
+
+                            return (
+                                <li
+                                    key={did}
+                                    className={`contact-item ${selectedContact === did ? 'active' : ''}`}
+                                    onClick={() => setSelectedContact(did)}
+                                >
+                                    <div className="contact-avatar">
+                                        {did.split(':').pop()?.substring(0, 2).toUpperCase()}
+                                    </div>
+                                    <div className="contact-info">
+                                        <div className="contact-name">
+                                            {did.substring(0, 16)}...{did.substring(did.length - 4)}
+                                        </div>
+                                        <div className="contact-preview">
+                                            {lastMsg.content || (lastMsg.ipfsCid ? '🔒 Encrypted message' : 'Content unavailable')}
+                                        </div>
+                                    </div>
+                                    <div className="contact-meta">
+                                        <div className="contact-time">
+                                            {new Date(lastMsg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        </div>
+                                        {unreadCount > 0 && (
+                                            <div className="unread-badge">{unreadCount}</div>
+                                        )}
+                                    </div>
+                                </li>
+                            );
+                        })}
+                    </ul>
                 </div>
-            </header>
 
-            <nav className="dashboard-nav">
-                <button
-                    className={activeTab === 'compose' ? 'active' : ''}
-                    onClick={() => setActiveTab('compose')}
-                >
-                    ✍️ Compose
-                </button>
-                <button
-                    className={activeTab === 'inbox' ? 'active' : ''}
-                    onClick={() => setActiveTab('inbox')}
-                >
-                    📥 Inbox ({inboxMessages.length})
-                </button>
-                <button
-                    className={activeTab === 'sent' ? 'active' : ''}
-                    onClick={() => setActiveTab('sent')}
-                >
-                    📤 Sent ({sentMessages.length})
-                </button>
-            </nav>
+                {/* Main Chat Area */}
+                <div className="main-content">
+                    {selectedContact ? (
+                        <>
+                            <div className="chat-header">
+                                <div className="contact-avatar">
+                                    {selectedContact.split(':').pop()?.substring(0, 2).toUpperCase()}
+                                </div>
+                                <div className="chat-header-info">
+                                    <h3>{selectedContact}</h3>
+                                    <p>Blockchain Identity</p>
+                                </div>
+                            </div>
 
-            {statusMessage && (
-                <div className={`status-message ${statusMessage.includes('✓') ? 'success' : statusMessage.includes('Error') ? 'error' : ''}`}>
-                    {statusMessage}
+                            <div className="messages-area">
+                                <div className="messages-container">
+                                    {conversations.get(selectedContact)?.map((msg) => (
+                                        <div key={msg.hash} className={`message-bubble ${msg.isSent ? 'sent' : 'received'}`}>
+                                            <div className="bubble-content">
+                                                <div className={`bubble-text ${!msg.content ? 'unavailable' : ''}`}>
+                                                    {msg.content || (
+                                                        <button
+                                                            className="load-button"
+                                                            onClick={() => loadMessageContent(msg)}
+                                                        >
+                                                            🔒 Load Content
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <div className="bubble-meta">
+                                                    <span className="bubble-time">
+                                                        {new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    </span>
+                                                    {msg.isSent && (
+                                                        <span className={`bubble-status ${msg.acknowledged ? 'read' : 'pending'}`}>
+                                                            {msg.acknowledged ? '✓✓' : '✓'}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                {!msg.isSent && !msg.acknowledged && (
+                                                    <button
+                                                        className="acknowledge-button"
+                                                        onClick={() => acknowledgeMessage(msg.hash)}
+                                                    >
+                                                        Mark as Read
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div ref={messagesEndRef} />
+                                </div>
+                            </div>
+
+                            <div className="message-input-container">
+                                <div className="message-input-wrapper">
+                                    <textarea
+                                        className="message-input"
+                                        placeholder="Type a message..."
+                                        value={messageContent}
+                                        onChange={(e) => setMessageContent(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter' && !e.shiftKey) {
+                                                e.preventDefault();
+                                                handleSendMessage(selectedContact, messageContent);
+                                            }
+                                        }}
+                                    />
+                                    <button
+                                        className="send-button"
+                                        disabled={isLoading || !messageContent.trim()}
+                                        onClick={() => handleSendMessage(selectedContact, messageContent)}
+                                    >
+                                        Send
+                                    </button>
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="empty-state">
+                            <div className="empty-state-icon">💬</div>
+                            <div className="empty-state-text">Select a conversation</div>
+                            <div className="empty-state-subtext">or start a new chat</div>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* New Chat Button */}
+            <button
+                className="new-chat-button"
+                onClick={() => setShowNewChatModal(true)}
+            >
+                +
+            </button>
+
+            {/* New Chat Modal */}
+            {showNewChatModal && (
+                <div className="modal-overlay" onClick={() => setShowNewChatModal(false)}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()}>
+                        <h2>Start New Chat</h2>
+                        <input
+                            className="form-input"
+                            placeholder="Recipient DID (did:eth:0x...)"
+                            value={recipientDID}
+                            onChange={(e) => setRecipientDID(e.target.value)}
+                        />
+                        <textarea
+                            className="form-textarea"
+                            placeholder="First message..."
+                            value={messageContent}
+                            onChange={(e) => setMessageContent(e.target.value)}
+                            style={{ marginTop: '1rem', height: '100px' }}
+                        />
+                        <div className="modal-actions">
+                            <button onClick={() => setShowNewChatModal(false)}>Cancel</button>
+                            <button
+                                className="primary"
+                                disabled={!recipientDID || !messageContent}
+                                onClick={() => handleSendMessage(recipientDID, messageContent)}
+                            >
+                                Send Message
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
-            <main className="dashboard-content">
-                {activeTab === 'compose' && (
-                    <div className="compose-section">
-                        <h2>Send New Message</h2>
-                        <div className="form-group">
-                            <label htmlFor="recipient">Recipient DID</label>
-                            <input
-                                id="recipient"
-                                type="text"
-                                placeholder="did:eth:0x..."
-                                value={recipientDID}
-                                onChange={(e) => setRecipientDID(e.target.value)}
-                                disabled={isLoading}
-                            />
-                        </div>
-                        <div className="form-group">
-                            <label htmlFor="message">Message</label>
-                            <textarea
-                                id="message"
-                                placeholder="Type your message here..."
-                                value={messageContent}
-                                onChange={(e) => setMessageContent(e.target.value)}
-                                disabled={isLoading}
-                                rows={8}
-                            />
-                        </div>
-                        <button
-                            className="send-button"
-                            onClick={sendMessage}
-                            disabled={isLoading || !recipientDID || !messageContent}
-                        >
-                            {isLoading ? '⏳ Sending...' : '📨 Send Message'}
-                        </button>
-                    </div>
-                )}
-
-                {activeTab === 'inbox' && (
-                    <div className="messages-section">
-                        <h2>Received Messages</h2>
-                        {inboxMessages.length === 0 ? (
-                            <div className="empty-state">
-                                <p>📭 No messages yet</p>
-                            </div>
-                        ) : (
-                            <div className="messages-list">
-                                {inboxMessages.map((message) => (
-                                    <div key={message.hash} className="message-card">
-                                        <div className="message-header">
-                                            <span className="message-from">From: {message.senderDID}</span>
-                                            <span className="message-time">
-                                                {new Date(message.timestamp * 1000).toLocaleString()}
-                                            </span>
-                                        </div>
-                                        <div className="message-body">
-                                            {message.content ? (
-                                                <p>{message.content}</p>
-                                            ) : (
-                                                <button
-                                                    className="load-button"
-                                                    onClick={() => loadMessageContent(message)}
-                                                >
-                                                    {message.ipfsCid ? '📂 Load Message' : '⚠️ CID Missing (Historical)'}
-                                                </button>
-                                            )}
-                                        </div>
-                                        <div className="message-footer">
-                                            {message.acknowledged ? (
-                                                <span className="acknowledged">✓ Acknowledged</span>
-                                            ) : (
-                                                <button
-                                                    className="ack-button"
-                                                    onClick={() => acknowledgeMessage(message.hash)}
-                                                >
-                                                    ✓ Acknowledge
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {activeTab === 'sent' && (
-                    <div className="messages-section">
-                        <h2>Sent Messages</h2>
-                        {sentMessages.length === 0 ? (
-                            <div className="empty-state">
-                                <p>📭 No sent messages yet</p>
-                            </div>
-                        ) : (
-                            <div className="messages-list">
-                                {sentMessages.map((message) => (
-                                    <div key={message.hash} className="message-card sent">
-                                        <div className="message-header">
-                                            <span className="message-to">To: {message.receiverDID}</span>
-                                            <span className="message-time">
-                                                {new Date(message.timestamp * 1000).toLocaleString()}
-                                            </span>
-                                        </div>
-                                        <div className="message-body">
-                                            {message.content ? (
-                                                <p>{message.content}</p>
-                                            ) : (
-                                                <p style={{ fontStyle: 'italic', opacity: 0.7 }}>
-                                                    {message.ipfsCid ? 'Content hidden' : 'Content unavailable (Historical)'}
-                                                </p>
-                                            )}
-                                        </div>
-                                        <div className="message-footer">
-                                            {message.acknowledged ? (
-                                                <span className="acknowledged">✓ Read by recipient</span>
-                                            ) : (
-                                                <span className="pending">⏳ Pending (Unread)</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
-            </main>
+            {statusMessage && (
+                <div className="status-message">
+                    {statusMessage}
+                </div>
+            )}
         </div>
     );
 };
