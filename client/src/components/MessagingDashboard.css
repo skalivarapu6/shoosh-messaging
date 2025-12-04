@@ -2,8 +2,7 @@
 
 .messaging-dashboard {
   width: 100%;
-  max-width: 1200px;
-  margin: 0 auto;
+  margin: auto;
   padding: 2rem;
   min-height: 100vh;
 }
@@ -20,9 +19,7 @@
 .dashboard-header h1 {
   font-size: 2.5rem;
   margin: 0;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  background: white;
   background-clip: text;
 }
 
@@ -71,7 +68,7 @@
 }
 
 .dashboard-nav button.active {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #646cff;
   color: white;
   box-shadow: 0 4px 15px rgba(100, 108, 255, 0.4);
 }
@@ -111,17 +108,12 @@
   }
 }
 
-/* Dashboard Content */
 .dashboard-content {
   background: rgba(255, 255, 255, 0.05);
   border-radius: 16px;
   padding: 2rem;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
-  backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-/* Compose Section */
 .compose-section h2 {
   margin-top: 0;
   margin-bottom: 1.5rem;
@@ -141,7 +133,7 @@
 
 .form-group input,
 .form-group textarea {
-  width: 100%;
+  width: 96%;
   padding: 0.8rem 1rem;
   background: rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -167,15 +159,13 @@
 .send-button {
   width: 100%;
   padding: 1rem 2rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #646cff;
   border: none;
   border-radius: 8px;
   color: white;
   font-size: 1.1rem;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(100, 108, 255, 0.3);
 }
 
 .send-button:hover:not(:disabled) {
@@ -188,7 +178,6 @@
   cursor: not-allowed;
 }
 
-/* Messages Section */
 .messages-section h2 {
   margin-top: 0;
   margin-bottom: 1.5rem;
@@ -214,28 +203,10 @@
   border-radius: 12px;
   padding: 1.5rem;
   transition: all 0.3s ease;
-  animation: fadeIn 0.5s ease;
-}
-
-.message-card:hover {
-  border-color: rgba(100, 108, 255, 0.3);
-  box-shadow: 0 4px 20px rgba(100, 108, 255, 0.2);
-  transform: translateY(-2px);
 }
 
 .message-card.sent {
   border-left: 4px solid #667eea;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .message-header {

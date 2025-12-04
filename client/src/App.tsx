@@ -12,12 +12,10 @@ const App: React.FC = () => {
   const { switchChain } = useSwitchChain();
   const { writeContract: registerDID } = useWriteContract();
 
-  // Custom hook to check if we have a valid credential
   const { hasCredential, isCredentialLoading } = useCredentialStatus();
 
   const did = address ? `did:eth:${address.toLowerCase()}` : "";
 
-  // Check if DID is registered using the 'exists' function
   const { data: isDIDRegistered, isLoading: isDIDLoading } = useReadContract({
     address: import.meta.env.VITE_DID_REGISTRY_ADDRESS,
     abi: DIDRegistryABI,
@@ -28,7 +26,6 @@ const App: React.FC = () => {
     }
   });
 
-  // Function to request credential from backend
   async function requestCredential() {
     if (!did) return;
 
@@ -56,7 +53,6 @@ const App: React.FC = () => {
           localStorage.setItem("credential_blob", JSON.stringify(data.blob));
           console.log("Credential saved to localStorage, reloading page...");
           alert("Credential already exists! Redirecting to dashboard...");
-          // Force reload to trigger hasCredential check
           window.location.reload();
         } else {
           console.error("Server didn't return credential blob");

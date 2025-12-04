@@ -12,7 +12,7 @@ interface Message {
     content?: string;
     ipfsCid?: string;
     acknowledged: boolean;
-    isSent: boolean; // true if we sent it, false if we received it
+    isSent: boolean; 
 }
 
 const MessagingDashboard = () => {
@@ -29,7 +29,6 @@ const MessagingDashboard = () => {
 
     const myDID = address ? `did:eth:${address.toLowerCase()}` : '';
 
-    // Pinata configuration for IPFS uploads
     const PINATA_API_KEY = import.meta.env.VITE_PINATA_API_KEY || '';
     const PINATA_SECRET_KEY = import.meta.env.VITE_PINATA_SECRET_KEY || '';
 
@@ -51,24 +50,20 @@ const MessagingDashboard = () => {
         }
     }, [myDID]);
 
-    // Fetch historical messages on mount with chunking
     useEffect(() => {
         if (!publicClient || !myDID) return;
 
         const fetchHistory = async () => {
             try {
                 const currentBlock = await publicClient.getBlockNumber();
-                // We only fetch the last 100 blocks to avoid hitting strict RPC limits
-                // The user relies on localStorage for older sent messages
                 const totalBlocksToFetch = 100n;
-                const chunkSize = 10n; // Strict limit from error message
+                const chunkSize = 10n; 
 
                 const startBlock = currentBlock - totalBlocksToFetch > 0n ? currentBlock - totalBlocksToFetch : 0n;
 
                 const sentLogs = [];
                 const ackLogs = [];
 
-                // Fetch in chunks
                 for (let i = startBlock; i < currentBlock; i += chunkSize) {
                     const to = (i + chunkSize - 1n) < currentBlock ? (i + chunkSize - 1n) : currentBlock;
                     try {
@@ -91,7 +86,6 @@ const MessagingDashboard = () => {
                         ackLogs.push(...chunkAck);
                     } catch (err) {
                         console.warn(`Failed to fetch logs for chunk ${i}-${to}`, err);
-                        // Continue to next chunk
                     }
                 }
 
@@ -100,8 +94,6 @@ const MessagingDashboard = () => {
                 );
 
                 const historicalMessages: Message[] = [];
-
-                // Get CID mapping from localStorage
                 const cidMappingStr = localStorage.getItem('ipfs_cid_mapping');
                 const cidMapping = cidMappingStr ? JSON.parse(cidMappingStr) : {};
 
@@ -112,11 +104,9 @@ const MessagingDashboard = () => {
                     const isIncoming = receiverDID.toLowerCase() === myDID.toLowerCase();
                     const isOutgoing = senderDID.toLowerCase() === myDID.toLowerCase();
 
-                    // Get IPFS CID from mapping if available
                     let ipfsCid = cidMapping[messageHash];
                     let content: string | undefined;
 
-                    // If not in localStorage, try fetching from server
                     if (!ipfsCid) {
                         try {
                             const response = await fetch(`http://localhost:3001/get-cid/${messageHash}`);
@@ -130,7 +120,6 @@ const MessagingDashboard = () => {
                         }
                     }
 
-                    // If we have the CID and it's local, get the content immediately
                     if (ipfsCid?.startsWith('local-')) {
                         const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
                         if (encrypted) {
@@ -142,7 +131,6 @@ const MessagingDashboard = () => {
                         }
                     }
 
-                    // Add as incoming message (Inbox)
                     if (isIncoming) {
                         historicalMessages.push({
                             hash: messageHash,
@@ -156,7 +144,6 @@ const MessagingDashboard = () => {
                         });
                     }
 
-                    // Add as outgoing message (Sent)
                     if (isOutgoing) {
                         historicalMessages.push({
                             hash: messageHash,
@@ -186,20 +173,16 @@ const MessagingDashboard = () => {
         fetchHistory();
     }, [publicClient, myDID]);
 
-    // Watch for incoming messages
     useWatchContractEvent({
         address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
         abi: MessageMetadataABI,
         eventName: 'MessageSent',
         onLogs(logs) {
             logs.forEach(async (log) => {
-                // @ts-ignore - wagmi's Log type doesn't include args, but it's available at runtime
                 const args = (log as any).args;
                 const { messageHash, senderDID, receiverDID, timestamp } = args;
 
-                // Check if this message is for us (Inbox)
                 if (receiverDID.toLowerCase() === myDID.toLowerCase()) {
-                    // Try to get IPFS CID from localStorage mapping
                     const cidMapping = localStorage.getItem('ipfs_cid_mapping');
                     let ipfsCid: string | undefined;
                     let content: string | undefined;
@@ -209,7 +192,6 @@ const MessagingDashboard = () => {
                             const mapping = JSON.parse(cidMapping);
                             ipfsCid = mapping[messageHash];
 
-                            // If we have the CID and it's local, get the content immediately
                             if (ipfsCid?.startsWith('local-')) {
                                 const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
                                 if (encrypted) {
@@ -221,7 +203,6 @@ const MessagingDashboard = () => {
                         }
                     }
 
-                    // If not in localStorage, try fetching from server
                     if (!ipfsCid) {
                         try {
                             const response = await fetch(`http://localhost:3001/get-cid/${messageHash}`);
@@ -284,7 +265,6 @@ const MessagingDashboard = () => {
         },
     });
 
-    // Watch for acknowledgments
     useWatchContractEvent({
         address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
         abi: MessageMetadataABI,
@@ -304,8 +284,6 @@ const MessagingDashboard = () => {
     });
 
     const encryptMessage = (content: string): string => {
-        // Simple Base64 encoding for demo - in production use proper asymmetric encryption
-        // You'd typically encrypt with recipient's public key here
         return btoa(content);
     };
 
@@ -321,7 +299,6 @@ const MessagingDashboard = () => {
         try {
             const encrypted = encryptMessage(content);
 
-            // Use Pinata if configured, otherwise use public IPFS gateway
             if (PINATA_API_KEY && PINATA_SECRET_KEY) {
                 const formData = new FormData();
                 const blob = new Blob([encrypted], { type: 'text/plain' });
@@ -339,11 +316,9 @@ const MessagingDashboard = () => {
                 const data = await response.json();
                 return data.IpfsHash;
             } else {
-                // Fallback: Store in localStorage with a unique key for demo purposes
-                // In production, you MUST use actual IPFS/Pinata
                 const cid = 'local-' + Date.now() + '-' + Math.random().toString(36).substring(7);
                 localStorage.setItem(`ipfs_${cid}`, encrypted);
-                console.warn('⚠️ Using localStorage fallback. Configure Pinata for production!');
+                console.warn('Using localStorage fallback. Configure Pinata for production!');
                 return cid;
             }
         } catch (error) {
@@ -354,14 +329,12 @@ const MessagingDashboard = () => {
 
     const fetchFromIPFS = async (cid: string): Promise<string> => {
         try {
-            // Check if it's a local storage fallback
             if (cid.startsWith('local-')) {
                 const encrypted = localStorage.getItem(`ipfs_${cid}`);
                 if (!encrypted) throw new Error('Content not found');
                 return decryptMessage(encrypted);
             }
 
-            // Fetch from IPFS gateway
             const response = await fetch(`https://gateway.pinata.cloud/ipfs/${cid}`);
             if (!response.ok) throw new Error('Failed to fetch from IPFS');
 
@@ -388,20 +361,16 @@ const MessagingDashboard = () => {
         setStatusMessage('Uploading to IPFS...');
 
         try {
-            // 1. Upload encrypted content to IPFS
             const ipfsCid = await uploadToIPFS(messageContent);
             setStatusMessage('Creating message commitment...');
 
-            // 2. Create message hash (hash of IPFS CID + content for integrity)
             const messageHash = keccak256(toUtf8Bytes(ipfsCid + messageContent));
 
-            // 3. Store hash->CID mapping in localStorage for inbox retrieval
             const cidMapping = localStorage.getItem('ipfs_cid_mapping');
             const mapping = cidMapping ? JSON.parse(cidMapping) : {};
             mapping[messageHash] = ipfsCid;
             localStorage.setItem('ipfs_cid_mapping', JSON.stringify(mapping));
 
-            // 4. Also store on server for cross-user messaging
             try {
                 await fetch('http://localhost:3001/store-cid', {
                     method: 'POST',
@@ -411,10 +380,8 @@ const MessagingDashboard = () => {
                 console.log('CID stored on server for cross-user access');
             } catch (err) {
                 console.warn('Failed to store CID on server:', err);
-                // Continue anyway - local storage still works
             }
 
-            // 5. Send commitment to blockchain
             writeContract({
                 address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
                 abi: MessageMetadataABI,
@@ -426,7 +393,6 @@ const MessagingDashboard = () => {
                     setMessageContent('');
                     setRecipientDID('');
 
-                    // Add to sent messages immediately
                     const newMessage: Message = {
                         hash: messageHash,
                         senderDID: myDID,
@@ -439,7 +405,6 @@ const MessagingDashboard = () => {
                     };
                     setMessages(prev => {
                         const updated = [...prev, newMessage];
-                        // Persist to local storage
                         localStorage.setItem(`sent_messages_${myDID}`, JSON.stringify(updated.filter(m => m.isSent)));
                         return updated;
                     });
@@ -469,7 +434,6 @@ const MessagingDashboard = () => {
                     const updated = prev.map(msg =>
                         msg.hash === messageHash ? { ...msg, acknowledged: true } : msg
                     );
-                    // Update local storage if needed (to sync ack status)
                     localStorage.setItem(`sent_messages_${myDID}`, JSON.stringify(updated.filter(m => m.isSent)));
                     return updated;
                 });
@@ -483,53 +447,14 @@ const MessagingDashboard = () => {
     };
 
     const loadMessageContent = async (message: Message) => {
-        // If we don't have the CID (e.g. from historical logs), we can't load it easily 
-        // without an indexer or storing it in the event (which we don't).
-        // BUT, for the demo, if it's a local message, we might have it in localStorage if we sent it.
-        // If we received it, we need the CID. 
-        // The current contract DOES NOT store the CID in the event. This is a limitation.
-        // For this prototype, we will prompt the user to enter the CID if missing, or 
-        // rely on the fact that for "Sent" messages we might not have the CID in history unless we stored it locally.
-
-        // Wait! The contract only stores the hash. The event only has the hash.
-        // The CID is NOT on-chain. This means the receiver cannot download the message 
-        // unless the sender sent the CID off-chain or it was in the event.
-        // Checking the contract...
-        // The contract event is: event MessageSent(bytes32 indexed messageHash, string senderDID, string receiverDID, uint256 timestamp);
-        // It does NOT contain the IPFS CID.
-        // This means the receiver CANNOT download the message with the current contract design 
-        // unless the CID is communicated another way.
-
-        // However, for the sake of this specific user flow where they sent it to themselves:
-        // They might have it in localStorage if they used the fallback.
 
         if (message.content) return;
-
-        // If we don't have a CID attached to the message object (which we won't for historical messages),
-        // we are kind of stuck unless we change the contract or the event.
-        // For now, let's try to find it in localStorage by iterating keys if it's a local test.
-
         if (!message.ipfsCid) {
-            // Try to find a matching hash in localStorage for demo purposes
-            // In a real app, the CID should be part of the emitted event or stored in the contract.
-            // Since we can't change the contract easily now, we'll assume the user is testing locally.
-
-            // This is a hack for the prototype to work without contract changes
             const keys = Object.keys(localStorage);
             for (const key of keys) {
                 if (key.startsWith('ipfs_')) {
                     const content = localStorage.getItem(key);
                     if (content) {
-                        // Check if this content matches the hash
-                        // We need the original CID + content to match the hash
-                        // hash = keccak256(cid + content)
-                        // But we stored encrypted content.
-                        // This is getting complicated.
-
-                        // SIMPLIFICATION:
-                        // For this prototype, we will just show a message saying 
-                        // "Content unavailable for historical messages in this version"
-                        // unless we can find a way to link it.
                     }
                 }
             }
@@ -552,7 +477,7 @@ const MessagingDashboard = () => {
     return (
         <div className="messaging-dashboard">
             <header className="dashboard-header">
-                <h1>🔐 Secure Messaging</h1>
+                <h1>Secure Messaging</h1>
                 <div className="user-info">
                     <span className="did-badge">Your DID: {myDID}</span>
                 </div>
@@ -563,19 +488,19 @@ const MessagingDashboard = () => {
                     className={activeTab === 'compose' ? 'active' : ''}
                     onClick={() => setActiveTab('compose')}
                 >
-                    ✍️ Compose
+                    Compose
                 </button>
                 <button
                     className={activeTab === 'inbox' ? 'active' : ''}
                     onClick={() => setActiveTab('inbox')}
                 >
-                    📥 Inbox ({inboxMessages.length})
+                    Inbox ({inboxMessages.length})
                 </button>
                 <button
                     className={activeTab === 'sent' ? 'active' : ''}
                     onClick={() => setActiveTab('sent')}
                 >
-                    📤 Sent ({sentMessages.length})
+                    Sent ({sentMessages.length})
                 </button>
             </nav>
 
@@ -616,7 +541,7 @@ const MessagingDashboard = () => {
                             onClick={sendMessage}
                             disabled={isLoading || !recipientDID || !messageContent}
                         >
-                            {isLoading ? '⏳ Sending...' : '📨 Send Message'}
+                            {isLoading ? 'Sending...' : 'Send Message'}
                         </button>
                     </div>
                 )}
@@ -626,7 +551,7 @@ const MessagingDashboard = () => {
                         <h2>Received Messages</h2>
                         {inboxMessages.length === 0 ? (
                             <div className="empty-state">
-                                <p>📭 No messages yet</p>
+                                <p>No messages yet</p>
                             </div>
                         ) : (
                             <div className="messages-list">
@@ -646,7 +571,7 @@ const MessagingDashboard = () => {
                                                     className="load-button"
                                                     onClick={() => loadMessageContent(message)}
                                                 >
-                                                    {message.ipfsCid ? '📂 Load Message' : '⚠️ CID Missing (Historical)'}
+                                                    {message.ipfsCid ? 'Load Message' : 'CID Missing (Historical)'}
                                                 </button>
                                             )}
                                         </div>
@@ -658,7 +583,7 @@ const MessagingDashboard = () => {
                                                     className="ack-button"
                                                     onClick={() => acknowledgeMessage(message.hash)}
                                                 >
-                                                    ✓ Acknowledge
+                                                    Acknowledge
                                                 </button>
                                             )}
                                         </div>
@@ -674,7 +599,7 @@ const MessagingDashboard = () => {
                         <h2>Sent Messages</h2>
                         {sentMessages.length === 0 ? (
                             <div className="empty-state">
-                                <p>📭 No sent messages yet</p>
+                                <p>No sent messages yet</p>
                             </div>
                         ) : (
                             <div className="messages-list">
@@ -697,9 +622,9 @@ const MessagingDashboard = () => {
                                         </div>
                                         <div className="message-footer">
                                             {message.acknowledged ? (
-                                                <span className="acknowledged">✓ Read by recipient</span>
+                                                <span className="acknowledged">Read by recipient</span>
                                             ) : (
-                                                <span className="pending">⏳ Pending (Unread)</span>
+                                                <span className="pending">Pending (Unread)</span>
                                             )}
                                         </div>
                                     </div>

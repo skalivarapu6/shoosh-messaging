@@ -5,7 +5,7 @@ import { ethers } from "ethers";
 import CredentialManagerABI from "./CredentialManagerABI.json" with { type: "json" };
 import DIDRegistryABI from "./DIDRegistryABI.json" with { type: "json" };
 
-dotenv.config({ path: "../.env" });
+dotenv.config();
 
 const app = express();
 app.use(cors());
@@ -35,15 +35,12 @@ const didRegistry = new ethers.Contract(
   issuerWallet
 )
 
-// 🔹 Temporary CID Registry (in-memory)
-// Maps messageHash -> { ipfsCid, timestamp }
 const cidRegistry = new Map();
 
 app.get("/", (_, res) => {
   res.send("Credential Issuer Backend Running");
 });
 
-// 🔹 Store IPFS CID for a message
 app.post("/store-cid", (req, res) => {
   try {
     const { messageHash, ipfsCid } = req.body;
@@ -65,7 +62,6 @@ app.post("/store-cid", (req, res) => {
   }
 });
 
-// 🔹 Retrieve IPFS CID for a message
 app.get("/get-cid/:messageHash", (req, res) => {
   try {
     const { messageHash } = req.params;
@@ -142,8 +138,6 @@ app.post("/issue-credential", async (req, res) => {
     console.log("Issuing credential:", credentialHash);
 
     try {
-      // 🔹 This is the on-chain write that can revert with
-      // "Credential: already registered"
       const tx = await credentialManager.registerCredential(credentialHash);
       await tx.wait();
       console.log("Credential registered:", tx.hash);
@@ -155,7 +149,6 @@ app.post("/issue-credential", async (req, res) => {
         status: "created"
       });
     } catch (err) {
-      // Try to pull a readable message out of the error
       const msg =
         err?.reason ||
         err?.shortMessage ||
@@ -175,7 +168,6 @@ app.post("/issue-credential", async (req, res) => {
         });
       }
 
-      // Anything else still treated as an internal error
       throw err;
     }
   } catch (err) {
