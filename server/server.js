@@ -35,8 +35,51 @@ const didRegistry = new ethers.Contract(
   issuerWallet
 )
 
+// 🔹 Temporary CID Registry (in-memory)
+// Maps messageHash -> { ipfsCid, timestamp }
+const cidRegistry = new Map();
+
 app.get("/", (_, res) => {
   res.send("Credential Issuer Backend Running");
+});
+
+// 🔹 Store IPFS CID for a message
+app.post("/store-cid", (req, res) => {
+  try {
+    const { messageHash, ipfsCid } = req.body;
+
+    if (!messageHash || !ipfsCid) {
+      return res.status(400).json({ error: "Missing messageHash or ipfsCid" });
+    }
+
+    cidRegistry.set(messageHash, {
+      ipfsCid,
+      timestamp: Date.now()
+    });
+
+    console.log(`Stored CID for message ${messageHash}: ${ipfsCid}`);
+    res.json({ success: true });
+  } catch (error) {
+    console.error("Error storing CID:", error);
+    res.status(500).json({ error: "Failed to store CID" });
+  }
+});
+
+// 🔹 Retrieve IPFS CID for a message
+app.get("/get-cid/:messageHash", (req, res) => {
+  try {
+    const { messageHash } = req.params;
+    const data = cidRegistry.get(messageHash);
+
+    if (!data) {
+      return res.status(404).json({ error: "CID not found" });
+    }
+
+    res.json({ ipfsCid: data.ipfsCid });
+  } catch (error) {
+    console.error("Error retrieving CID:", error);
+    res.status(500).json({ error: "Failed to retrieve CID" });
+  }
 });
 
 // app.post("/issue-credential", async (req, res) => {

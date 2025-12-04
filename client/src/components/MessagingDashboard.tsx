@@ -113,8 +113,22 @@ const MessagingDashboard = () => {
                     const isOutgoing = senderDID.toLowerCase() === myDID.toLowerCase();
 
                     // Get IPFS CID from mapping if available
-                    const ipfsCid = cidMapping[messageHash];
+                    let ipfsCid = cidMapping[messageHash];
                     let content: string | undefined;
+
+                    // If not in localStorage, try fetching from server
+                    if (!ipfsCid) {
+                        try {
+                            const response = await fetch(`http://localhost:3001/get-cid/${messageHash}`);
+                            if (response.ok) {
+                                const data = await response.json();
+                                ipfsCid = data.ipfsCid;
+                                console.log(`Retrieved CID from server for ${messageHash}`);
+                            }
+                        } catch (err) {
+                            console.warn(`Could not fetch CID from server for ${messageHash}`);
+                        }
+                    }
 
                     // If we have the CID and it's local, get the content immediately
                     if (ipfsCid?.startsWith('local-')) {
@@ -178,7 +192,7 @@ const MessagingDashboard = () => {
         abi: MessageMetadataABI,
         eventName: 'MessageSent',
         onLogs(logs) {
-            logs.forEach((log) => {
+            logs.forEach(async (log) => {
                 // @ts-ignore - wagmi's Log type doesn't include args, but it's available at runtime
                 const args = (log as any).args;
                 const { messageHash, senderDID, receiverDID, timestamp } = args;
@@ -204,6 +218,28 @@ const MessagingDashboard = () => {
                             }
                         } catch (e) {
                             console.error('Failed to parse CID mapping', e);
+                        }
+                    }
+
+                    // If not in localStorage, try fetching from server
+                    if (!ipfsCid) {
+                        try {
+                            const response = await fetch(`http://localhost:3001/get-cid/${messageHash}`);
+                            if (response.ok) {
+                                const data = await response.json();
+                                ipfsCid = data.ipfsCid;
+                                console.log(`Retrieved CID from server for incoming message ${messageHash}`);
+
+                                // If it's a local CID, try to get content
+                                if (ipfsCid?.startsWith('local-')) {
+                                    const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
+                                    if (encrypted) {
+                                        content = atob(encrypted);
+                                    }
+                                }
+                            }
+                        } catch (err) {
+                            console.warn(`Could not fetch CID from server for ${messageHash}`);
                         }
                     }
 
@@ -365,7 +401,20 @@ const MessagingDashboard = () => {
             mapping[messageHash] = ipfsCid;
             localStorage.setItem('ipfs_cid_mapping', JSON.stringify(mapping));
 
-            // 4. Send commitment to blockchain
+            // 4. Also store on server for cross-user messaging
+            try {
+                await fetch('http://localhost:3001/store-cid', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ messageHash, ipfsCid })
+                });
+                console.log('CID stored on server for cross-user access');
+            } catch (err) {
+                console.warn('Failed to store CID on server:', err);
+                // Continue anyway - local storage still works
+            }
+
+            // 5. Send commitment to blockchain
             writeContract({
                 address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
                 abi: MessageMetadataABI,
