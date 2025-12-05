@@ -7,11 +7,6 @@ const isValidKey = alchemyKey && alchemyKey !== "<my_api_key>" && alchemyKey !==
 
 const projectId = import.meta.env.VITE_WALLET_CONNECT_PROJECT_ID || 'YOUR_PROJECT_ID';
 
-console.log("[Debug] wagmi.ts loaded");
-console.log("[Debug] Alchemy Key present:", !!alchemyKey);
-console.log("[Debug] Project ID:", projectId);
-console.log("[Debug] Is Valid Alchemy Key:", isValidKey);
-
 if (projectId === 'YOUR_PROJECT_ID') {
   console.error("⚠️ VITE_WALLET_CONNECT_PROJECT_ID is not set. WalletConnect features will fail.");
 }

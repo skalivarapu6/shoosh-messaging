@@ -1,17 +1,29 @@
 /* Chat-Style Messaging UI */
 
 :root {
-  --color-bg: #f5f5f5;
-  --color-surface: #ffffff;
-  --color-text: #1a1a1a;
-  --color-text-muted: #666666;
-  --color-accent: #e91e63;
-  --color-accent-light: #fce4ec;
-  --color-border: #e0e0e0;
-  --color-hover: #f9f9f9;
-  --color-bubble-sent: #e91e63;
-  --color-bubble-received: #f0f0f0;
-  --font-sans: 'Inter', -apple-system, sans-serif;
+  /* Terminal Coder Coffee Theme */
+  --color-bg: #1E1B18;
+  /* Dark Espresso Background */
+  --color-surface: #2B2623;
+  /* Dark Roast Surface */
+  --color-text: #E6DCCA;
+  /* Cream Text */
+  --color-text-muted: #9C8F80;
+  /* Muted Latte */
+  --color-accent: #D4A373;
+  /* Caramel Accent */
+  --color-accent-light: #3E3630;
+  /* Darker Surface Highlight */
+  --color-border: #3E3630;
+  /* Dark Border */
+  --color-hover: #362F29;
+  /* Hover State */
+  --color-bubble-sent: #D4A373;
+  /* Caramel for sent */
+  --color-bubble-received: #3E3630;
+  /* Dark Roast for received */
+  --font-sans: 'JetBrains Mono', 'Fira Code', 'Monaco', monospace;
+  /* Terminal Font */
 }
 
 * {
@@ -127,7 +139,7 @@ body {
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #D4A373 0%, #8D7B68 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -226,7 +238,7 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 2rem;
-  background: #fafafa;
+  background: var(--color-bg);
 }
 
 .messages-container {
@@ -392,7 +404,7 @@ body {
 }
 
 .send-button:hover:not(:disabled) {
-  background: #c2185b;
+  background: #B0855B;
   transform: translateY(-1px);
 }
 
@@ -442,7 +454,7 @@ body {
   border: none;
   font-size: 1.5rem;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(233, 30, 99, 0.4);
+  box-shadow: 0 4px 12px rgba(141, 123, 104, 0.4);
   transition: all 0.2s ease;
   z-index: 100;
 }
@@ -509,13 +521,13 @@ body {
 
 .contacts-list::-webkit-scrollbar-thumb,
 .messages-area::-webkit-scrollbar-thumb {
-  background: #ccc;
+  background: var(--color-border);
   border-radius: 3px;
 }
 
 .contacts-list::-webkit-scrollbar-thumb:hover,
 .messages-area::-webkit-scrollbar-thumb:hover {
-  background: #999;
+  background: var(--color-accent);
 }
 
 /* Responsive */
@@ -594,4 +606,96 @@ body {
   margin-top: 2px;
   user-select: text;
   cursor: text;
+}
+
+/* Markdown Content Styles */
+.bubble-text p {
+  margin-bottom: 0.5rem;
+}
+
+.bubble-text p:last-child {
+  margin-bottom: 0;
+}
+
+.bubble-text code {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.85em;
+}
+
+.bubble-text pre {
+  background: rgba(0, 0, 0, 0.2);
+  padding: 0.8rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+
+.bubble-text pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.bubble-text a {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.bubble-text ul,
+.bubble-text ol {
+  margin-left: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.bubble-text blockquote {
+  border-left: 3px solid var(--color-accent);
+  margin-left: 0;
+  padding-left: 1rem;
+  opacity: 0.8;
+}
+
+/* Typing Indicator */
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0.5rem 1rem;
+  background: var(--color-surface);
+  border-radius: 18px;
+  border-bottom-left-radius: 4px;
+  width: fit-content;
+  margin-bottom: 1rem;
+  animation: slideUp 0.2s ease;
+}
+
+.typing-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--color-text-muted);
+  border-radius: 50%;
+  animation: typing 1.4s infinite ease-in-out both;
+}
+
+.typing-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.typing-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes typing {
+
+  0%,
+  80%,
+  100% {
+    transform: scale(0);
+  }
+
+  40% {
+    transform: scale(1);
+  }
 }

@@ -3,7 +3,6 @@ import { ethers } from "hardhat";
 async function main() {
     console.log("Deploying contracts to Sepolia...");
 
-    // Deploy DIDRegistry
     console.log("\n1. Deploying DIDRegistry...");
     const DIDRegistry = await ethers.getContractFactory("DIDRegistry");
     const didRegistry = await DIDRegistry.deploy();
@@ -11,7 +10,6 @@ async function main() {
     const didRegistryAddress = await didRegistry.getAddress();
     console.log("✅ DIDRegistry deployed to:", didRegistryAddress);
 
-    // Deploy MessageMetadata
     console.log("\n2. Deploying MessageMetadata...");
     const MessageMetadata = await ethers.getContractFactory("MessageMetadata");
     const messageMetadata = await MessageMetadata.deploy();
@@ -19,7 +17,6 @@ async function main() {
     const messageMetadataAddress = await messageMetadata.getAddress();
     console.log("✅ MessageMetadata deployed to:", messageMetadataAddress);
 
-    // Deploy CredentialManager
     console.log("\n3. Deploying CredentialManager...");
     const CredentialManager = await ethers.getContractFactory("CredentialManager");
     const credentialManager = await CredentialManager.deploy();

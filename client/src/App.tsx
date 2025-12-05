@@ -49,12 +49,10 @@ const App: React.FC = () => {
       }
 
       if (response.status === 409 && data.status === "already_exists") {
-        console.log("Credential already registered on-chain:", data.hash);
-        
+
+
         if (data.blob) {
-          console.log("Recovering credential blob:", data.blob);
-          localStorage.setItem("credential_blob", JSON.stringify(data.blob));
-          console.log("Credential saved to localStorage, reloading page...");
+          localStorage.setItem('credential', JSON.stringify(data.blob));
           alert("Credential already exists! Redirecting to dashboard...");
           // Force reload to trigger hasCredential check
           window.location.reload();
@@ -72,7 +70,7 @@ const App: React.FC = () => {
       }
 
       localStorage.setItem("credential_blob", JSON.stringify(data.blob));
-      console.log("Credential issued:", data);
+
       alert("Credential issued successfully!");
       window.location.reload();
 

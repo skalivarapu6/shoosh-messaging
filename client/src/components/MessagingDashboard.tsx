@@ -3,6 +3,7 @@ import { useAccount, useWriteContract, useWatchContractEvent, usePublicClient } 
 import { MessageMetadataABI } from '../contracts/MessageMetadata';
 import { keccak256, toUtf8Bytes } from 'ethers';
 import { io, Socket } from 'socket.io-client';
+import ReactMarkdown from 'react-markdown';
 import './MessagingDashboard.css';
 
 interface Message {
@@ -26,6 +27,7 @@ const MessagingDashboard = () => {
     const [statusMessage, setStatusMessage] = useState('');
     const [showNewChatModal, setShowNewChatModal] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [decryptingId, setDecryptingId] = useState<string | null>(null);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const { writeContract } = useWriteContract();
@@ -33,11 +35,9 @@ const MessagingDashboard = () => {
 
     const myDID = address ? `did:eth:${address.toLowerCase()}` : '';
 
-    // Pinata configuration for IPFS uploads
     const PINATA_API_KEY = import.meta.env.VITE_PINATA_API_KEY || '';
     const PINATA_SECRET_KEY = import.meta.env.VITE_PINATA_SECRET_KEY || '';
 
-    // Group messages by conversation partner
     const conversations = useMemo(() => {
         const groups = new Map<string, Message[]>();
 
@@ -49,7 +49,6 @@ const MessagingDashboard = () => {
             groups.get(partner)!.push(msg);
         });
 
-        // Sort messages within each conversation
         groups.forEach(msgs => {
             msgs.sort((a, b) => a.timestamp - b.timestamp);
         });
@@ -69,14 +68,12 @@ const MessagingDashboard = () => {
         }).filter(did => did.toLowerCase().includes(searchTerm.toLowerCase()));
     }, [conversations, searchTerm]);
 
-    // Auto-scroll to bottom of chat
     useEffect(() => {
         if (selectedContact) {
             messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
         }
     }, [messages, selectedContact]);
 
-    // Load locally saved messages on mount
     useEffect(() => {
         if (!myDID) return;
         const saved = localStorage.getItem(`sent_messages_${myDID}`);
@@ -94,15 +91,12 @@ const MessagingDashboard = () => {
         }
     }, [myDID]);
 
-    // WebSocket connection
     useEffect(() => {
         if (!myDID) return;
 
         const socket: Socket = io('http://localhost:3001');
 
-        socket.on('connect', () => {
-            console.log('✅ Connected to WebSocket server');
-        });
+        socket.on('connect', () => { });
 
         socket.on('new-message', async (data: {
             messageHash: string;
@@ -154,120 +148,31 @@ const MessagingDashboard = () => {
         };
     }, [myDID]);
 
-    // Fetch historical messages
+    // Load sent messages from localStorage only (no blockchain fetching to avoid RPC limits)
     useEffect(() => {
-        if (!publicClient || !myDID) return;
+        if (!myDID) return;
 
-        const fetchHistory = async () => {
+        const loadLocalMessages = () => {
             try {
-                const currentBlock = await publicClient.getBlockNumber();
-                // Reduce fetch range to avoid rate limits
-                const totalBlocksToFetch = 500n;
-                const chunkSize = 10n; // Strict 10 block limit for free tier
-                const startBlock = currentBlock - totalBlocksToFetch > 0n ? currentBlock - totalBlocksToFetch : 0n;
-
-                console.log(`Fetching history from block ${startBlock} to ${currentBlock}`);
-
-                const sentLogs = [];
-                const ackLogs = [];
-
-                for (let i = startBlock; i < currentBlock; i += chunkSize) {
-                    const toBlock = i + chunkSize > currentBlock ? currentBlock : i + chunkSize;
-
-                    // Add delay to respect RPC rate limits
-                    await new Promise(resolve => setTimeout(resolve, 200));
-
-                    try {
-                        const [chunkSent, chunkAck] = await Promise.all([
-                            publicClient.getContractEvents({
-                                address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
-                                abi: MessageMetadataABI,
-                                eventName: 'MessageSent',
-                                fromBlock: i,
-                                toBlock: toBlock
-                            }),
-                            publicClient.getContractEvents({
-                                address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
-                                abi: MessageMetadataABI,
-                                eventName: 'MessageAcknowledged',
-                                fromBlock: i,
-                                toBlock: toBlock
-                            })
-                        ]);
-                        sentLogs.push(...chunkSent);
-                        ackLogs.push(...chunkAck);
-                    } catch (err) {
-                        console.warn(`Failed to fetch logs for chunk ${i}-${to}`, err);
-                    }
-                }
-
-                const acknowledgedHashes = new Set(
-                    ackLogs.map(log => ((log as any).args).messageHash)
-                );
-
-                const cidMappingStr = localStorage.getItem('ipfs_cid_mapping');
-                const cidMapping = cidMappingStr ? JSON.parse(cidMappingStr) : {};
-
-                const historicalMessages: Message[] = [];
-
-                for (const log of sentLogs) {
-                    const args = (log as any).args;
-                    const { messageHash, senderDID, receiverDID, timestamp } = args;
-
-                    const isIncoming = receiverDID.toLowerCase() === myDID.toLowerCase();
-                    const isOutgoing = senderDID.toLowerCase() === myDID.toLowerCase();
-
-                    if (!isIncoming && !isOutgoing) continue;
-
-                    let ipfsCid = cidMapping[messageHash];
-                    let content: string | undefined;
-
-                    if (!ipfsCid && isIncoming) {
-                        try {
-                            const response = await fetch(`http://localhost:3001/get-cid/${messageHash}`);
-                            if (response.ok) {
-                                const data = await response.json();
-                                ipfsCid = data.ipfsCid;
-                            }
-                        } catch (err) {
-                            console.warn(`Could not fetch CID from server for ${messageHash}`);
-                        }
-                    }
-
-                    if (ipfsCid?.startsWith('local-')) {
-                        const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
-                        if (encrypted) {
-                            try {
-                                content = atob(encrypted);
-                            } catch (e) { console.error(e); }
-                        }
-                    }
-
-                    historicalMessages.push({
-                        hash: messageHash,
-                        senderDID,
-                        receiverDID,
-                        timestamp: Number(timestamp),
-                        acknowledged: acknowledgedHashes.has(messageHash),
-                        isSent: isOutgoing,
-                        ipfsCid,
-                        content
+                // Load previously sent messages from localStorage
+                const savedSentStr = localStorage.getItem(`sent_messages_${myDID}`);
+                if (savedSentStr) {
+                    const savedSent = JSON.parse(savedSentStr);
+                    setMessages(prev => {
+                        const combined = [...prev, ...savedSent];
+                        const unique = Array.from(
+                            new Map(combined.map(m => [m.hash + m.isSent, m])).values()
+                        );
+                        return unique;
                     });
                 }
-
-                setMessages(prev => {
-                    const existingKeys = new Set(prev.map(m => `${m.hash}-${m.isSent}`));
-                    const newMessages = historicalMessages.filter(m => !existingKeys.has(`${m.hash}-${m.isSent}`));
-                    return [...prev, ...newMessages];
-                });
-
             } catch (error) {
-                console.error("Failed to fetch message history:", error);
+                console.error('Failed to load local messages:', error);
             }
         };
 
-        fetchHistory();
-    }, [publicClient, myDID]);
+        loadLocalMessages();
+    }, [myDID]);
 
     // Watch for acknowledgments
     useWatchContractEvent({
@@ -362,7 +267,6 @@ const MessagingDashboard = () => {
                 abi: MessageMetadataABI,
                 functionName: 'sendMessageCommitment',
                 args: [messageHash, targetDID],
-                gas: 500000n, // Manual gas limit to prevent estimation errors
             }, {
                 onSuccess: () => {
                     const newMessage: Message = {
@@ -404,7 +308,6 @@ const MessagingDashboard = () => {
             abi: MessageMetadataABI,
             functionName: 'acknowledgeMessage',
             args: [messageHash],
-            gas: 500000n, // Manual gas limit
         }, {
             onSuccess: () => {
                 setMessages(prev => {
@@ -425,16 +328,24 @@ const MessagingDashboard = () => {
             alert("Content unavailable (missing CID)");
             return;
         }
-        try {
-            const content = await fetchFromIPFS(message.ipfsCid);
-            setMessages(prev =>
-                prev.map(msg =>
-                    msg.hash === message.hash ? { ...msg, content } : msg
-                )
-            );
-        } catch (e) {
-            console.error(e);
-        }
+
+        setDecryptingId(message.hash);
+
+        // Simulate "AI processing/decryption" delay
+        setTimeout(async () => {
+            try {
+                const content = await fetchFromIPFS(message.ipfsCid!);
+                setMessages(prev =>
+                    prev.map(msg =>
+                        msg.hash === message.hash ? { ...msg, content } : msg
+                    )
+                );
+            } catch (e) {
+                console.error(e);
+            } finally {
+                setDecryptingId(null);
+            }
+        }, 800);
     };
 
     return (
@@ -516,10 +427,18 @@ const MessagingDashboard = () => {
                             <div className="messages-area">
                                 <div className="messages-container">
                                     {conversations.get(selectedContact)?.map((msg) => (
-                                        <div key={msg.hash} className={`message-bubble ${msg.isSent ? 'sent' : 'received'}`}>
+                                        <div key={`${msg.hash}-${msg.isSent}`} className={`message-bubble ${msg.isSent ? 'sent' : 'received'}`}>
                                             <div className="bubble-content">
                                                 <div className={`bubble-text ${!msg.content ? 'unavailable' : ''}`}>
-                                                    {msg.content || (
+                                                    {decryptingId === msg.hash ? (
+                                                        <div className="typing-indicator">
+                                                            <div className="typing-dot"></div>
+                                                            <div className="typing-dot"></div>
+                                                            <div className="typing-dot"></div>
+                                                        </div>
+                                                    ) : msg.content ? (
+                                                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                                    ) : (
                                                         <button
                                                             className="load-button"
                                                             onClick={() => loadMessageContent(msg)}
@@ -549,6 +468,17 @@ const MessagingDashboard = () => {
                                             </div>
                                         </div>
                                     ))}
+                                    {isLoading && (
+                                        <div className="message-bubble sent">
+                                            <div className="bubble-content">
+                                                <div className="typing-indicator">
+                                                    <div className="typing-dot"></div>
+                                                    <div className="typing-dot"></div>
+                                                    <div className="typing-dot"></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div ref={messagesEndRef} />
                                 </div>
                             </div>

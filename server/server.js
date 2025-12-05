@@ -45,7 +45,6 @@ const didRegistry = new ethers.Contract(
   issuerWallet
 )
 
-// 🔹 Temporary CID Registry (in-memory)
 // Maps messageHash -> { ipfsCid, timestamp }
 import fs from 'fs';
 import path from 'path';
@@ -83,7 +82,7 @@ app.get("/", (_, res) => {
   res.send("Credential Issuer Backend Running");
 });
 
-// 🔹 Store IPFS CID for a message
+
 app.post("/store-cid", (req, res) => {
   try {
     const { messageHash, ipfsCid, senderDID, receiverDID } = req.body;
@@ -102,7 +101,7 @@ app.post("/store-cid", (req, res) => {
 
     console.log(`Stored CID for message ${messageHash}: ${ipfsCid}`);
 
-    // 🔹 Broadcast new message to all connected clients via WebSocket
+
     io.emit('new-message', {
       messageHash,
       ipfsCid,
@@ -118,7 +117,7 @@ app.post("/store-cid", (req, res) => {
   }
 });
 
-// 🔹 Retrieve IPFS CID for a message
+
 app.get("/get-cid/:messageHash", (req, res) => {
   try {
     const { messageHash } = req.params;
@@ -135,43 +134,6 @@ app.get("/get-cid/:messageHash", (req, res) => {
   }
 });
 
-// app.post("/issue-credential", async (req, res) => {
-//   try {
-//     const { did } = req.body;
-//     if (!did || !did.startsWith("did:eth:")) {
-//       return res.status(400).json({ error: "Invalid DID" });
-//     }
-
-//     const data = await didRegistry.getDID(did);
-//     if (!data.exists) {
-//       return res.status(400).json({ error: "DID Not Registered" });
-//     }
-
-//     const credential = {
-//       type: "MessagingAccessCredential",
-//       issuer: `did:eth:${issuerWallet.address}`
-//     };
-
-//     const blobString = JSON.stringify(credential);
-
-//     const credentialHash = ethers.keccak256(ethers.toUtf8Bytes(blobString));
-//     console.log("Issuing credential:", credentialHash);
-
-//     const tx = await credentialManager.registerCredential(credentialHash);
-//     await tx.wait();
-//     console.log("Credential registered:", tx.hash);
-
-//     res.json({
-//       blob: credential,
-//       hash: credentialHash,
-//       txHash: tx.hash
-//     });
-
-//   } catch (err) {
-//     console.error("Error issuing credential:", err);
-//     res.status(500).json({ error: err.message });
-//   }
-// });
 
 app.post("/issue-credential", async (req, res) => {
   try {
@@ -195,8 +157,7 @@ app.post("/issue-credential", async (req, res) => {
     console.log("Issuing credential:", credentialHash);
 
     try {
-      // 🔹 This is the on-chain write that can revert with
-      // "Credential: already registered"
+      // This can revert with "Credential: already registered"
       const tx = await credentialManager.registerCredential(credentialHash);
       await tx.wait();
       console.log("Credential registered:", tx.hash);
@@ -237,7 +198,7 @@ app.post("/issue-credential", async (req, res) => {
   }
 });
 
-// 🔹 WebSocket connection handling
+
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
 
