@@ -28,6 +28,18 @@ Blockchain focuses on decentralisation and consensus, a single entity cannot con
     ```solidity 
     truffle compile
     ```
+4. Run Server and Client
+```bash
+cd server
+npm install
+node server.js
+```
+
+```bash
+cd client
+npm install
+npm run dev
+```
 
 #### Off-Chain Setup
 
