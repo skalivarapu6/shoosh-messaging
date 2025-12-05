@@ -344,7 +344,7 @@ const MessagingDashboard = () => {
                 address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
                 abi: MessageMetadataABI,
                 functionName: 'sendMessageCommitment',
-                args: [messageHash, recipientDID],
+                args: [messageHash, recipientDID, ipfsCid],
             }, {
                 onSuccess: () => {
                     setStatusMessage('✓ Message sent successfully!');
