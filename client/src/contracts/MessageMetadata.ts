@@ -47,6 +47,12 @@ export const MessageMetadataABI = [
 			},
 			{
 				"indexed": false,
+				"internalType": "string",
+				"name": "ipfsCid",
+				"type": "string"
+			},
+			{
+				"indexed": false,
 				"internalType": "uint256",
 				"name": "timestamp",
 				"type": "uint256"
@@ -117,6 +123,11 @@ export const MessageMetadataABI = [
 			{
 				"internalType": "string",
 				"name": "receiverDID",
+				"type": "string"
+			},
+			{
+				"internalType": "string",
+				"name": "ipfsCid",
 				"type": "string"
 			}
 		],
