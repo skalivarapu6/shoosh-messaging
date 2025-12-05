@@ -24,7 +24,12 @@ export const config = getDefaultConfig({
   ],
   transports: {
     [sepolia.id]: isValidKey
-      ? http(`https://eth-sepolia.g.alchemy.com/v2/${alchemyKey}`)
+      ? http(`https://eth-sepolia.g.alchemy.com/v2/${alchemyKey}`, {
+        batch: true,
+        retryCount: 3,
+      })
       : http(),
-  }
+  },
+  pollingInterval: 12_000, // Poll every 12 seconds instead of default 4 seconds
 });
+

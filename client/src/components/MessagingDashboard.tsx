@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAccount, useWriteContract, useWatchContractEvent, usePublicClient } from 'wagmi';
 import { MessageMetadataABI } from '../contracts/MessageMetadata';
 import { keccak256, toUtf8Bytes } from 'ethers';
@@ -12,7 +12,7 @@ interface Message {
     content?: string;
     ipfsCid?: string;
     acknowledged: boolean;
-    isSent: boolean; 
+    isSent: boolean;
 }
 
 const MessagingDashboard = () => {
@@ -23,6 +23,7 @@ const MessagingDashboard = () => {
     const [messageContent, setMessageContent] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState('');
+    const hasFetchedHistory = useRef(false);
 
     const { writeContract } = useWriteContract();
     const publicClient = usePublicClient();
@@ -51,13 +52,14 @@ const MessagingDashboard = () => {
     }, [myDID]);
 
     useEffect(() => {
-        if (!publicClient || !myDID) return;
+        if (!publicClient || !myDID || hasFetchedHistory.current) return;
 
         const fetchHistory = async () => {
             try {
+                hasFetchedHistory.current = true;
                 const currentBlock = await publicClient.getBlockNumber();
                 const totalBlocksToFetch = 100n;
-                const chunkSize = 10n; 
+                const chunkSize = 10n;
 
                 const startBlock = currentBlock - totalBlocksToFetch > 0n ? currentBlock - totalBlocksToFetch : 0n;
 
@@ -94,32 +96,17 @@ const MessagingDashboard = () => {
                 );
 
                 const historicalMessages: Message[] = [];
-                const cidMappingStr = localStorage.getItem('ipfs_cid_mapping');
-                const cidMapping = cidMappingStr ? JSON.parse(cidMappingStr) : {};
 
                 for (const log of sentLogs) {
                     const args = (log as any).args;
-                    const { messageHash, senderDID, receiverDID, timestamp } = args;
+                    const { messageHash, senderDID, receiverDID, timestamp, ipfsCid } = args;
 
                     const isIncoming = receiverDID.toLowerCase() === myDID.toLowerCase();
                     const isOutgoing = senderDID.toLowerCase() === myDID.toLowerCase();
 
-                    let ipfsCid = cidMapping[messageHash];
                     let content: string | undefined;
 
-                    if (!ipfsCid) {
-                        try {
-                            const response = await fetch(`http://localhost:3001/get-cid/${messageHash}`);
-                            if (response.ok) {
-                                const data = await response.json();
-                                ipfsCid = data.ipfsCid;
-                                console.log(`Retrieved CID from server for ${messageHash}`);
-                            }
-                        } catch (err) {
-                            console.warn(`Could not fetch CID from server for ${messageHash}`);
-                        }
-                    }
-
+                    // If it's a local CID, try to get content immediately
                     if (ipfsCid?.startsWith('local-')) {
                         const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
                         if (encrypted) {
@@ -159,7 +146,6 @@ const MessagingDashboard = () => {
                 }
 
                 setMessages(prev => {
-                    // Merge with existing messages, avoiding duplicates based on hash AND isSent
                     const existingKeys = new Set(prev.map(m => `${m.hash}-${m.isSent}`));
                     const newMessages = historicalMessages.filter(m => !existingKeys.has(`${m.hash}-${m.isSent}`));
                     return [...prev, ...newMessages];
@@ -173,114 +159,86 @@ const MessagingDashboard = () => {
         fetchHistory();
     }, [publicClient, myDID]);
 
+    const handleMessageSent = useCallback((logs: any[]) => {
+        logs.forEach(async (log) => {
+            const args = (log as any).args;
+            const { messageHash, senderDID, receiverDID, timestamp } = args;
+
+            if (receiverDID.toLowerCase() === myDID.toLowerCase()) {
+                const ipfsCid = args.ipfsCid;
+                let content: string | undefined;
+
+                if (ipfsCid?.startsWith('local-')) {
+                    const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
+                    if (encrypted) {
+                        content = atob(encrypted);
+                    }
+                }
+
+                const newMessage: Message = {
+                    hash: messageHash,
+                    senderDID,
+                    receiverDID,
+                    timestamp: Number(timestamp),
+                    acknowledged: false,
+                    isSent: false,
+                    ipfsCid,
+                    content
+                };
+
+                setMessages(prev => {
+                    if (prev.some(m => m.hash === messageHash && m.isSent === false)) return prev;
+                    return [...prev, newMessage];
+                });
+            }
+
+            if (senderDID.toLowerCase() === myDID.toLowerCase()) {
+                const sentMessage: Message = {
+                    hash: messageHash,
+                    senderDID,
+                    receiverDID,
+                    timestamp: Number(timestamp),
+                    acknowledged: false,
+                    isSent: true,
+                };
+
+                setMessages(prev => {
+                    if (prev.some(m => m.hash === messageHash && m.isSent === true)) return prev;
+                    const updated = [...prev, sentMessage];
+                    localStorage.setItem(`sent_messages_${myDID}`, JSON.stringify(updated.filter(m => m.isSent)));
+                    return updated;
+                });
+            }
+        });
+    }, [myDID]);
+
+    const handleMessageAcknowledged = useCallback((logs: any[]) => {
+        logs.forEach((log) => {
+            const args = (log as any).args;
+            const { messageHash } = args;
+
+            setMessages(prev =>
+                prev.map(msg =>
+                    msg.hash === messageHash ? { ...msg, acknowledged: true } : msg
+                )
+            );
+        });
+    }, []);
+
     useWatchContractEvent({
         address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
         abi: MessageMetadataABI,
         eventName: 'MessageSent',
-        onLogs(logs) {
-            logs.forEach(async (log) => {
-                const args = (log as any).args;
-                const { messageHash, senderDID, receiverDID, timestamp } = args;
-
-                if (receiverDID.toLowerCase() === myDID.toLowerCase()) {
-                    const cidMapping = localStorage.getItem('ipfs_cid_mapping');
-                    let ipfsCid: string | undefined;
-                    let content: string | undefined;
-
-                    if (cidMapping) {
-                        try {
-                            const mapping = JSON.parse(cidMapping);
-                            ipfsCid = mapping[messageHash];
-
-                            if (ipfsCid?.startsWith('local-')) {
-                                const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
-                                if (encrypted) {
-                                    content = atob(encrypted);
-                                }
-                            }
-                        } catch (e) {
-                            console.error('Failed to parse CID mapping', e);
-                        }
-                    }
-
-                    if (!ipfsCid) {
-                        try {
-                            const response = await fetch(`http://localhost:3001/get-cid/${messageHash}`);
-                            if (response.ok) {
-                                const data = await response.json();
-                                ipfsCid = data.ipfsCid;
-                                console.log(`Retrieved CID from server for incoming message ${messageHash}`);
-
-                                // If it's a local CID, try to get content
-                                if (ipfsCid?.startsWith('local-')) {
-                                    const encrypted = localStorage.getItem(`ipfs_${ipfsCid}`);
-                                    if (encrypted) {
-                                        content = atob(encrypted);
-                                    }
-                                }
-                            }
-                        } catch (err) {
-                            console.warn(`Could not fetch CID from server for ${messageHash}`);
-                        }
-                    }
-
-                    const newMessage: Message = {
-                        hash: messageHash,
-                        senderDID,
-                        receiverDID,
-                        timestamp: Number(timestamp),
-                        acknowledged: false,
-                        isSent: false,
-                        ipfsCid,
-                        content
-                    };
-
-                    setMessages(prev => {
-                        // Avoid duplicates (check hash AND isSent)
-                        if (prev.some(m => m.hash === messageHash && m.isSent === false)) return prev;
-                        return [...prev, newMessage];
-                    });
-                }
-
-                // Also track messages we sent (Sent)
-                if (senderDID.toLowerCase() === myDID.toLowerCase()) {
-                    const sentMessage: Message = {
-                        hash: messageHash,
-                        senderDID,
-                        receiverDID,
-                        timestamp: Number(timestamp),
-                        acknowledged: false,
-                        isSent: true,
-                    };
-
-                    setMessages(prev => {
-                        if (prev.some(m => m.hash === messageHash && m.isSent === true)) return prev;
-                        const updated = [...prev, sentMessage];
-                        // Persist to local storage
-                        localStorage.setItem(`sent_messages_${myDID}`, JSON.stringify(updated.filter(m => m.isSent)));
-                        return updated;
-                    });
-                }
-            });
-        },
+        onLogs: handleMessageSent,
+        enabled: !!myDID,
     });
 
     useWatchContractEvent({
         address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
         abi: MessageMetadataABI,
         eventName: 'MessageAcknowledged',
-        onLogs(logs) {
-            logs.forEach((log) => {
-                const args = (log as any).args;
-                const { messageHash } = args;
-
-                setMessages(prev =>
-                    prev.map(msg =>
-                        msg.hash === messageHash ? { ...msg, acknowledged: true } : msg
-                    )
-                );
-            });
-        }
+        onLogs: handleMessageAcknowledged,
+        enabled: !!myDID,
     });
 
     const encryptMessage = (content: string): string => {
