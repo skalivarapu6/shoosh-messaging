@@ -1,29 +1,17 @@
 /* Chat-Style Messaging UI */
 
 :root {
-  /* Terminal Coder Coffee Theme */
   --color-bg: #1E1B18;
-  /* Dark Espresso Background */
   --color-surface: #2B2623;
-  /* Dark Roast Surface */
   --color-text: #E6DCCA;
-  /* Cream Text */
   --color-text-muted: #9C8F80;
-  /* Muted Latte */
   --color-accent: #D4A373;
-  /* Caramel Accent */
   --color-accent-light: #3E3630;
-  /* Darker Surface Highlight */
   --color-border: #3E3630;
-  /* Dark Border */
   --color-hover: #362F29;
-  /* Hover State */
   --color-bubble-sent: #D4A373;
-  /* Caramel for sent */
   --color-bubble-received: #3E3630;
-  /* Dark Roast for received */
   --font-sans: 'JetBrains Mono', 'Fira Code', 'Monaco', monospace;
-  /* Terminal Font */
 }
 
 * {

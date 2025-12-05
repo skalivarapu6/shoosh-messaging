@@ -14,7 +14,7 @@ interface Message {
     content?: string;
     ipfsCid?: string;
     acknowledged: boolean;
-    isSent: boolean; // true if we sent it, false if we received it
+    isSent: boolean;
 }
 
 const MessagingDashboard = () => {
@@ -31,7 +31,7 @@ const MessagingDashboard = () => {
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const { writeContract } = useWriteContract();
-    const publicClient = usePublicClient();
+    // const publicClient = usePublicClient();
 
     const myDID = address ? `did:eth:${address.toLowerCase()}` : '';
 
@@ -174,7 +174,6 @@ const MessagingDashboard = () => {
         loadLocalMessages();
     }, [myDID]);
 
-    // Watch for acknowledgments
     useWatchContractEvent({
         address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
         abi: MessageMetadataABI,
@@ -242,13 +241,11 @@ const MessagingDashboard = () => {
             const ipfsCid = await uploadToIPFS(content);
             const messageHash = keccak256(toUtf8Bytes(ipfsCid + content));
 
-            // Store mapping
             const cidMapping = localStorage.getItem('ipfs_cid_mapping');
             const mapping = cidMapping ? JSON.parse(cidMapping) : {};
             mapping[messageHash] = ipfsCid;
             localStorage.setItem('ipfs_cid_mapping', JSON.stringify(mapping));
 
-            // Store on server
             try {
                 await fetch('http://localhost:3001/store-cid', {
                     method: 'POST',
@@ -443,7 +440,7 @@ const MessagingDashboard = () => {
                                                             className="load-button"
                                                             onClick={() => loadMessageContent(msg)}
                                                         >
-                                                            🔒 Load Content
+                                                            Load Content
                                                         </button>
                                                     )}
                                                 </div>
