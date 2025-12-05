@@ -5,7 +5,7 @@ import { ethers } from "ethers";
 import CredentialManagerABI from "./CredentialManagerABI.json" with { type: "json" };
 import DIDRegistryABI from "./DIDRegistryABI.json" with { type: "json" };
 
-dotenv.config();
+dotenv.config({ path: "../.env" });
 
 const app = express();
 app.use(cors());
