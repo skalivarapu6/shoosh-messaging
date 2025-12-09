@@ -20,6 +20,7 @@ export const config = getDefaultConfig({
   transports: {
     [sepolia.id]: isValidKey
       ? http(`https://eth-sepolia.g.alchemy.com/v2/${alchemyKey}`, {
+<<<<<<< HEAD
         // Reduce polling frequency to minimize API calls
         batch: {
           wait: 100, // Batch requests within 100ms
@@ -30,5 +31,13 @@ export const config = getDefaultConfig({
       : http(),
   },
   // Optimize polling intervals
+=======
+        batch: true,
+        retryCount: 3,
+      })
+      : http(),
+  },
+>>>>>>> origin/main
   pollingInterval: 12_000, // Poll every 12 seconds instead of default 4 seconds
 });
+

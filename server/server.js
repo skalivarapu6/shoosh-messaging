@@ -45,6 +45,7 @@ const didRegistry = new ethers.Contract(
   issuerWallet
 )
 
+<<<<<<< HEAD
 // Maps messageHash -> { ipfsCid, timestamp }
 import fs from 'fs';
 import path from 'path';
@@ -77,12 +78,18 @@ const saveCids = () => {
     console.error('Failed to save CIDs:', err);
   }
 };
+=======
+const cidRegistry = new Map();
+>>>>>>> origin/main
 
 app.get("/", (_, res) => {
   res.send("Credential Issuer Backend Running");
 });
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
 app.post("/store-cid", (req, res) => {
   try {
     const { messageHash, ipfsCid, senderDID, receiverDID } = req.body;
@@ -117,7 +124,10 @@ app.post("/store-cid", (req, res) => {
   }
 });
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/main
 app.get("/get-cid/:messageHash", (req, res) => {
   try {
     const { messageHash } = req.params;
@@ -157,7 +167,10 @@ app.post("/issue-credential", async (req, res) => {
     console.log("Issuing credential:", credentialHash);
 
     try {
+<<<<<<< HEAD
       // This can revert with "Credential: already registered"
+=======
+>>>>>>> origin/main
       const tx = await credentialManager.registerCredential(credentialHash);
       await tx.wait();
       console.log("Credential registered:", tx.hash);
@@ -169,7 +182,6 @@ app.post("/issue-credential", async (req, res) => {
         status: "created"
       });
     } catch (err) {
-      // Try to pull a readable message out of the error
       const msg =
         err?.reason ||
         err?.shortMessage ||
@@ -189,7 +201,6 @@ app.post("/issue-credential", async (req, res) => {
         });
       }
 
-      // Anything else still treated as an internal error
       throw err;
     }
   } catch (err) {

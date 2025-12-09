@@ -12,13 +12,14 @@ contract MessageMetadata {
 
     mapping(bytes32 => MessageInfo) private _messages;
 
-    event MessageSent(bytes32 indexed messageHash, string senderDID, string receiverDID, uint256 timestamp);
+    event MessageSent(bytes32 indexed messageHash, string senderDID, string receiverDID, string ipfsCid, uint256 timestamp);
     event MessageAcknowledged(bytes32 indexed messageHash, string receiverDID, uint256 timestamp);
 
-    function sendMessageCommitment(bytes32 messageHash, string calldata receiverDID) external {
+    function sendMessageCommitment(bytes32 messageHash, string calldata receiverDID, string calldata ipfsCid) external {
         require(messageHash != bytes32(0), "Message: empty hash");
         require(!_messages[messageHash].exists, "Message: already exists");
         require(bytes(receiverDID).length > 0, "Message: empty receiver DID");
+        require(bytes(ipfsCid).length > 0, "Message: empty IPFS CID");
 
         string memory senderDID = _toDidString(msg.sender);
 
@@ -34,6 +35,7 @@ contract MessageMetadata {
             messageHash,
             senderDID,
             receiverDID,
+            ipfsCid,
             block.timestamp
         );
     }
