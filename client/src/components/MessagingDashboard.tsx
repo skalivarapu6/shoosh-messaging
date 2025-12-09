@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAccount, useWriteContract, useWatchContractEvent, usePublicClient } from 'wagmi';
 import { MessageMetadataABI } from '../contracts/MessageMetadata';
 import { keccak256, toUtf8Bytes } from 'ethers';
@@ -18,12 +18,18 @@ interface Message {
 const MessagingDashboard = () => {
     const { address } = useAccount();
     const [messages, setMessages] = useState<Message[]>([]);
-    const [activeTab, setActiveTab] = useState<'compose' | 'inbox' | 'sent'>('compose');
-    const [recipientDID, setRecipientDID] = useState('');
+    const [selectedPeerDID, setSelectedPeerDID] = useState<string | null>(null);
+    const [newChatInput, setNewChatInput] = useState('');
+    const [isCreatingNew, setIsCreatingNew] = useState(false);
+
+    // Chat input state
     const [messageContent, setMessageContent] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [statusMessage, setStatusMessage] = useState('');
+
+    // Refs
     const hasFetchedHistory = useRef(false);
+    const messagesEndRef = useRef<HTMLDivElement>(null);
 
     const { writeContract } = useWriteContract();
     const publicClient = usePublicClient();
@@ -33,7 +39,39 @@ const MessagingDashboard = () => {
     const PINATA_API_KEY = import.meta.env.VITE_PINATA_API_KEY || '';
     const PINATA_SECRET_KEY = import.meta.env.VITE_PINATA_SECRET_KEY || '';
 
-    // Load locally saved messages on mount
+    // Scroll to bottom of chat
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    };
+
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages, selectedPeerDID]);
+
+    // Derived state: Group messages by conversation (peer DID)
+    const conversations = useMemo(() => {
+        const groups: { [key: string]: Message[] } = {};
+
+        messages.forEach(msg => {
+            const peer = msg.isSent ? msg.receiverDID : msg.senderDID;
+            if (!groups[peer]) {
+                groups[peer] = [];
+            }
+            groups[peer].push(msg);
+        });
+
+        // Convert to array and sort by latest message timestamp
+        return Object.entries(groups)
+            .map(([peerDID, msgs]) => ({
+                peerDID,
+                messages: msgs.sort((a, b) => a.timestamp - b.timestamp),
+                lastMessage: msgs.reduce((latest, current) =>
+                    current.timestamp > latest.timestamp ? current : latest, msgs[0])
+            }))
+            .sort((a, b) => b.lastMessage.timestamp - a.lastMessage.timestamp);
+    }, [messages]);
+
+    // Load locally saved messages
     useEffect(() => {
         if (!myDID) return;
         const saved = localStorage.getItem(`sent_messages_${myDID}`);
@@ -51,6 +89,7 @@ const MessagingDashboard = () => {
         }
     }, [myDID]);
 
+    // Fetch history from chain
     useEffect(() => {
         if (!publicClient || !myDID || hasFetchedHistory.current) return;
 
@@ -58,8 +97,8 @@ const MessagingDashboard = () => {
             try {
                 hasFetchedHistory.current = true;
                 const currentBlock = await publicClient.getBlockNumber();
-                const totalBlocksToFetch = 100n;
-                const chunkSize = 10n;
+                const totalBlocksToFetch = 200n; // Reduced to comply with RPC rate limits
+                const chunkSize = 5n; // Alchemy free tier supports max 10 blocks range
 
                 const startBlock = currentBlock - totalBlocksToFetch > 0n ? currentBlock - totalBlocksToFetch : 0n;
 
@@ -118,27 +157,14 @@ const MessagingDashboard = () => {
                         }
                     }
 
-                    if (isIncoming) {
+                    if (isIncoming || isOutgoing) {
                         historicalMessages.push({
                             hash: messageHash,
                             senderDID,
                             receiverDID,
                             timestamp: Number(timestamp),
                             acknowledged: acknowledgedHashes.has(messageHash),
-                            isSent: false,
-                            ipfsCid,
-                            content
-                        });
-                    }
-
-                    if (isOutgoing) {
-                        historicalMessages.push({
-                            hash: messageHash,
-                            senderDID,
-                            receiverDID,
-                            timestamp: Number(timestamp),
-                            acknowledged: acknowledgedHashes.has(messageHash),
-                            isSent: true,
+                            isSent: isOutgoing,
                             ipfsCid,
                             content
                         });
@@ -159,6 +185,7 @@ const MessagingDashboard = () => {
         fetchHistory();
     }, [publicClient, myDID]);
 
+    // Event Listeners
     const handleMessageSent = useCallback((logs: any[]) => {
         logs.forEach(async (log) => {
             const args = (log as any).args;
@@ -241,16 +268,10 @@ const MessagingDashboard = () => {
         enabled: !!myDID,
     });
 
-    const encryptMessage = (content: string): string => {
-        return btoa(content);
-    };
-
+    // Helpers
+    const encryptMessage = (content: string): string => btoa(content);
     const decryptMessage = (encrypted: string): string => {
-        try {
-            return atob(encrypted);
-        } catch {
-            return '[Unable to decrypt message]';
-        }
+        try { return atob(encrypted); } catch { return '[Unable to decrypt message]'; }
     };
 
     const uploadToIPFS = async (content: string): Promise<string> => {
@@ -304,26 +325,22 @@ const MessagingDashboard = () => {
         }
     };
 
+    // Actions
     const sendMessage = async () => {
-        if (!recipientDID || !messageContent) {
-            setStatusMessage('Please enter both recipient and message');
-            return;
-        }
+        if (!selectedPeerDID || !messageContent) return;
 
-        if (!recipientDID.startsWith('did:eth:')) {
-            setStatusMessage('Invalid DID format. Must start with "did:eth:"');
+        if (!selectedPeerDID.startsWith('did:eth:')) {
+            setStatusMessage('Invalid DID format.');
             return;
         }
 
         setIsLoading(true);
-        setStatusMessage('Uploading to IPFS...');
 
         try {
             const ipfsCid = await uploadToIPFS(messageContent);
-            setStatusMessage('Creating message commitment...');
-
             const messageHash = keccak256(toUtf8Bytes(ipfsCid + messageContent));
 
+            // Store CID mapping locally/server for retrieval
             const cidMapping = localStorage.getItem('ipfs_cid_mapping');
             const mapping = cidMapping ? JSON.parse(cidMapping) : {};
             mapping[messageHash] = ipfsCid;
@@ -335,26 +352,20 @@ const MessagingDashboard = () => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ messageHash, ipfsCid })
                 });
-                console.log('CID stored on server for cross-user access');
-            } catch (err) {
-                console.warn('Failed to store CID on server:', err);
-            }
+            } catch (err) { console.warn("Failed to store CID on server", err); }
 
             writeContract({
                 address: import.meta.env.VITE_MESSAGE_METADATA_ADDRESS as `0x${string}`,
                 abi: MessageMetadataABI,
                 functionName: 'sendMessageCommitment',
-                args: [messageHash, recipientDID, ipfsCid],
+                args: [messageHash, selectedPeerDID, ipfsCid],
             }, {
                 onSuccess: () => {
-                    setStatusMessage('✓ Message sent successfully!');
                     setMessageContent('');
-                    setRecipientDID('');
-
                     const newMessage: Message = {
                         hash: messageHash,
                         senderDID: myDID,
-                        receiverDID: recipientDID,
+                        receiverDID: selectedPeerDID,
                         timestamp: Date.now() / 1000,
                         content: messageContent,
                         ipfsCid,
@@ -366,15 +377,13 @@ const MessagingDashboard = () => {
                         localStorage.setItem(`sent_messages_${myDID}`, JSON.stringify(updated.filter(m => m.isSent)));
                         return updated;
                     });
-
-                    setTimeout(() => setStatusMessage(''), 3000);
                 },
                 onError: (error) => {
-                    setStatusMessage(`Error: ${error.message}`);
+                    alert(`Error sending: ${error.message}`);
                 },
             });
         } catch (error: any) {
-            setStatusMessage(`Error: ${error.message}`);
+            alert(`Error: ${error.message}`);
         } finally {
             setIsLoading(false);
         }
@@ -395,29 +404,14 @@ const MessagingDashboard = () => {
                     localStorage.setItem(`sent_messages_${myDID}`, JSON.stringify(updated.filter(m => m.isSent)));
                     return updated;
                 });
-                setStatusMessage('✓ Message acknowledged!');
-                setTimeout(() => setStatusMessage(''), 3000);
-            },
-            onError: (error) => {
-                setStatusMessage(`Error: ${error.message}`);
-            },
+            }
         });
     };
 
     const loadMessageContent = async (message: Message) => {
-
         if (message.content) return;
         if (!message.ipfsCid) {
-            const keys = Object.keys(localStorage);
-            for (const key of keys) {
-                if (key.startsWith('ipfs_')) {
-                    const content = localStorage.getItem(key);
-                    if (content) {
-                    }
-                }
-            }
-
-            alert("For historical messages fetched from chain, the IPFS CID is not available in the current contract version. You can only read messages received while you are online.");
+            alert("CID Missing for historical message.");
             return;
         }
 
@@ -429,166 +423,156 @@ const MessagingDashboard = () => {
         );
     };
 
-    const inboxMessages = messages.filter(m => !m.isSent);
-    const sentMessages = messages.filter(m => m.isSent);
+    const startNewChat = () => {
+        if (newChatInput) {
+            setSelectedPeerDID(newChatInput);
+            setNewChatInput('');
+            setIsCreatingNew(false);
+        }
+    };
+
+    // Derived view data
+    const activeMessages = selectedPeerDID
+        ? conversations.find(c => c.peerDID === selectedPeerDID)?.messages || []
+        : [];
+
+    // Sort local active messages to ensure order
+    const sortedActiveMessages = [...activeMessages].sort((a, b) => a.timestamp - b.timestamp);
 
     return (
-        <div className="messaging-dashboard">
-            <header className="dashboard-header">
-                <h1>Secure Messaging</h1>
-                <div className="user-info">
-                    <span className="did-badge">Your DID: {myDID}</span>
+        <div className="app-container">
+            <aside className="sidebar">
+                <div className="sidebar-header">
+                    <div className="my-identity">
+                        <div className="avatar">0X</div>
+                        <div className="identity-info">
+                            <h3>My Identity</h3>
+                            <p className="did-truncate" title={myDID}>{myDID}</p>
+                        </div>
+                    </div>
                 </div>
-            </header>
 
-            <nav className="dashboard-nav">
-                <button
-                    className={activeTab === 'compose' ? 'active' : ''}
-                    onClick={() => setActiveTab('compose')}
-                >
-                    Compose
-                </button>
-                <button
-                    className={activeTab === 'inbox' ? 'active' : ''}
-                    onClick={() => setActiveTab('inbox')}
-                >
-                    Inbox ({inboxMessages.length})
-                </button>
-                <button
-                    className={activeTab === 'sent' ? 'active' : ''}
-                    onClick={() => setActiveTab('sent')}
-                >
-                    Sent ({sentMessages.length})
-                </button>
-            </nav>
+                <div className="conversations-list">
+                    <div className="list-header">
+                        <h3>Messages</h3>
+                    </div>
 
-            {statusMessage && (
-                <div className={`status-message ${statusMessage.includes('✓') ? 'success' : statusMessage.includes('Error') ? 'error' : ''}`}>
-                    {statusMessage}
-                </div>
-            )}
-
-            <main className="dashboard-content">
-                {activeTab === 'compose' && (
-                    <div className="compose-section">
-                        <h2>Send New Message</h2>
-                        <div className="form-group">
-                            <label htmlFor="recipient">Recipient DID</label>
+                    {isCreatingNew ? (
+                        <div className="new-chat-input">
                             <input
-                                id="recipient"
+                                autoFocus
                                 type="text"
-                                placeholder="did:eth:0x..."
-                                value={recipientDID}
-                                onChange={(e) => setRecipientDID(e.target.value)}
-                                disabled={isLoading}
+                                placeholder="Enter DID (did:eth:0x...)"
+                                value={newChatInput}
+                                onChange={e => setNewChatInput(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && startNewChat()}
                             />
+                            <div className="new-chat-actions">
+                                <button onClick={startNewChat}>Start</button>
+                                <button onClick={() => setIsCreatingNew(false)} className="cancel">X</button>
+                            </div>
                         </div>
-                        <div className="form-group">
-                            <label htmlFor="message">Message</label>
-                            <textarea
-                                id="message"
-                                placeholder="Type your message here..."
-                                value={messageContent}
-                                onChange={(e) => setMessageContent(e.target.value)}
-                                disabled={isLoading}
-                                rows={8}
-                            />
-                        </div>
-                        <button
-                            className="send-button"
-                            onClick={sendMessage}
-                            disabled={isLoading || !recipientDID || !messageContent}
-                        >
-                            {isLoading ? 'Sending...' : 'Send Message'}
+                    ) : (
+                        <button className="new-chat-btn" onClick={() => setIsCreatingNew(true)}>
+                            + New Message
                         </button>
-                    </div>
-                )}
+                    )}
 
-                {activeTab === 'inbox' && (
-                    <div className="messages-section">
-                        <h2>Received Messages</h2>
-                        {inboxMessages.length === 0 ? (
-                            <div className="empty-state">
-                                <p>No messages yet</p>
+                    {conversations.map(convo => (
+                        <div
+                            key={convo.peerDID}
+                            className={`conversation-item ${selectedPeerDID === convo.peerDID ? 'active' : ''}`}
+                            onClick={() => setSelectedPeerDID(convo.peerDID)}
+                        >
+                            <div className="avatar-small">0X</div>
+                            <div className="convo-info">
+                                <p className="peer-did">{convo.peerDID.replace('did:eth:', '').substring(0, 10)}...</p>
+                                <p className="last-msg-preview">
+                                    {convo.lastMessage.isSent ? 'You: ' : ''}
+                                    {convo.lastMessage.content ? convo.lastMessage.content.substring(0, 15) + '...' : '[Encrypted]'}
+                                </p>
                             </div>
-                        ) : (
-                            <div className="messages-list">
-                                {inboxMessages.map((message) => (
-                                    <div key={message.hash} className="message-card">
-                                        <div className="message-header">
-                                            <span className="message-from">From: {message.senderDID}</span>
-                                            <span className="message-time">
-                                                {new Date(message.timestamp * 1000).toLocaleString()}
+                            <div className="convo-meta">
+                                <span className="time">
+                                    {new Date(convo.lastMessage.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </aside>
+
+            <main className="chat-window">
+                {selectedPeerDID ? (
+                    <>
+                        <header className="chat-header">
+                            <div className="avatar">0X</div>
+                            <div className="chat-info">
+                                <h2>{selectedPeerDID}</h2>
+                                <p>Blockchain Identity</p>
+                            </div>
+                        </header>
+
+                        <div className="messages-container">
+                            {sortedActiveMessages.length === 0 && (
+                                <div className="empty-chat-state">
+                                    <p>No messages yet. Start the conversation!</p>
+                                </div>
+                            )}
+
+                            {sortedActiveMessages.map(msg => (
+                                <div key={msg.hash} className={`message-row ${msg.isSent ? 'sent' : 'received'}`}>
+                                    <div className="message-bubble">
+                                        {!msg.content ? (
+                                            <button className="load-content-btn" onClick={() => loadMessageContent(msg)}>
+                                                Load Content
+                                            </button>
+                                        ) : (
+                                            <p>{msg.content}</p>
+                                        )}
+
+                                        <div className="message-meta">
+                                            <span className="timestamp">
+                                                {new Date(msg.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                             </span>
-                                        </div>
-                                        <div className="message-body">
-                                            {message.content ? (
-                                                <p>{message.content}</p>
-                                            ) : (
-                                                <button
-                                                    className="load-button"
-                                                    onClick={() => loadMessageContent(message)}
-                                                >
-                                                    {message.ipfsCid ? 'Load Message' : 'CID Missing (Historical)'}
-                                                </button>
+                                            {msg.isSent && (
+                                                <span className="status-icon">
+                                                    {msg.acknowledged ? '✓✓' : '✓'}
+                                                </span>
                                             )}
-                                        </div>
-                                        <div className="message-footer">
-                                            {message.acknowledged ? (
-                                                <span className="acknowledged">✓ Acknowledged</span>
-                                            ) : (
-                                                <button
-                                                    className="ack-button"
-                                                    onClick={() => acknowledgeMessage(message.hash)}
-                                                >
-                                                    Acknowledge
+                                            {!msg.isSent && !msg.acknowledged && (
+                                                <button className="ack-btn-small" onClick={() => acknowledgeMessage(msg.hash)}>
+                                                    Mark Read
                                                 </button>
                                             )}
                                         </div>
                                     </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
+                                </div>
+                            ))}
+                            <div ref={messagesEndRef} />
+                        </div>
 
-                {activeTab === 'sent' && (
-                    <div className="messages-section">
-                        <h2>Sent Messages</h2>
-                        {sentMessages.length === 0 ? (
-                            <div className="empty-state">
-                                <p>No sent messages yet</p>
-                            </div>
-                        ) : (
-                            <div className="messages-list">
-                                {sentMessages.map((message) => (
-                                    <div key={message.hash} className="message-card sent">
-                                        <div className="message-header">
-                                            <span className="message-to">To: {message.receiverDID}</span>
-                                            <span className="message-time">
-                                                {new Date(message.timestamp * 1000).toLocaleString()}
-                                            </span>
-                                        </div>
-                                        <div className="message-body">
-                                            {message.content ? (
-                                                <p>{message.content}</p>
-                                            ) : (
-                                                <p style={{ fontStyle: 'italic', opacity: 0.7 }}>
-                                                    {message.ipfsCid ? 'Content hidden' : 'Content unavailable (Historical)'}
-                                                </p>
-                                            )}
-                                        </div>
-                                        <div className="message-footer">
-                                            {message.acknowledged ? (
-                                                <span className="acknowledged">Read by recipient</span>
-                                            ) : (
-                                                <span className="pending">Pending (Unread)</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+                        <div className="chat-input-area">
+                            <input
+                                type="text"
+                                placeholder="Type a message..."
+                                value={messageContent}
+                                onChange={e => setMessageContent(e.target.value)}
+                                onKeyDown={e => e.key === 'Enter' && !isLoading && sendMessage()}
+                                disabled={isLoading}
+                            />
+                            <button
+                                className="send-fab"
+                                onClick={sendMessage}
+                                disabled={isLoading || !messageContent}
+                            >
+                                {isLoading ? '...' : 'Send'}
+                            </button>
+                        </div>
+                    </>
+                ) : (
+                    <div className="no-chat-selected">
+                        <h2>Select a conversation to start messaging</h2>
                     </div>
                 )}
             </main>

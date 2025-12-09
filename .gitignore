@@ -21,3 +21,4 @@ cache/
 .deploys
 .states
 .explanation
+.cids.json
