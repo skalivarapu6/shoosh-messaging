@@ -25,7 +25,7 @@ const MessagingDashboard = () => {
     // Chat input state
     const [messageContent, setMessageContent] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [statusMessage, setStatusMessage] = useState('');
+
 
     // Refs
     const hasFetchedHistory = useRef(false);
@@ -35,6 +35,14 @@ const MessagingDashboard = () => {
     const publicClient = usePublicClient();
 
     const myDID = address ? `did:eth:${address.toLowerCase()}` : '';
+
+    // Reset state when user identity changes
+    useEffect(() => {
+        setMessages([]);
+        setSelectedPeerDID(null);
+        hasFetchedHistory.current = false;
+        setIsCreatingNew(false);
+    }, [myDID]);
 
     const PINATA_API_KEY = import.meta.env.VITE_PINATA_API_KEY || '';
     const PINATA_SECRET_KEY = import.meta.env.VITE_PINATA_SECRET_KEY || '';
@@ -142,6 +150,11 @@ const MessagingDashboard = () => {
 
                     const isIncoming = receiverDID.toLowerCase() === myDID.toLowerCase();
                     const isOutgoing = senderDID.toLowerCase() === myDID.toLowerCase();
+
+                    console.log(`[DEBUG] Msg: ${messageHash.substring(0, 8)}...`);
+                    console.log(`[DEBUG] MyDID: ${myDID}`);
+                    console.log(`[DEBUG] Sender: ${senderDID} (Outgoing: ${isOutgoing})`);
+                    console.log(`[DEBUG] Receiver: ${receiverDID} (Incoming: ${isIncoming})`);
 
                     let content: string | undefined;
 
@@ -330,7 +343,7 @@ const MessagingDashboard = () => {
         if (!selectedPeerDID || !messageContent) return;
 
         if (!selectedPeerDID.startsWith('did:eth:')) {
-            setStatusMessage('Invalid DID format.');
+            alert('Invalid DID format. Must start with "did:eth:"');
             return;
         }
 
@@ -447,6 +460,22 @@ const MessagingDashboard = () => {
                             <h3>My Identity</h3>
                             <p className="did-truncate" title={myDID}>{myDID}</p>
                         </div>
+                        <button
+                            className="refresh-btn"
+                            title="Clear History & Refresh"
+                            onClick={() => {
+                                if (confirm("Clear all local message history for this account? This cannot be undone.")) {
+                                    localStorage.removeItem(`sent_messages_${myDID}`);
+                                    localStorage.removeItem('ipfs_cid_mapping');
+                                    setMessages([]);
+                                    setSelectedPeerDID(null);
+                                    hasFetchedHistory.current = false;
+                                    setIsCreatingNew(false);
+                                }
+                            }}
+                        >
+                            ↻
+                        </button>
                     </div>
                 </div>
 
