@@ -431,12 +431,10 @@ const MessagingDashboard = () => {
         }
     };
 
-    // Derived view data
     const activeMessages = selectedPeerDID
         ? conversations.find(c => c.peerDID === selectedPeerDID)?.messages || []
         : [];
 
-    // Sort local active messages to ensure order
     const sortedActiveMessages = [...activeMessages].sort((a, b) => a.timestamp - b.timestamp);
 
     return (
